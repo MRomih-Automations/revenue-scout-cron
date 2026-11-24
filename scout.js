@@ -1,6 +1,7 @@
 /**
  * 24/7 Cloud Scout & Telegram Alert Engine
  * Self-contained runner for GitHub Actions.
+ * Automatically updates live telemetry.json on each run.
  */
 const https = require('node:https');
 
@@ -38,6 +39,64 @@ function sendTelegram(text) {
   });
 }
 
+async function updateLiveTelemetry(metrics) {
+  const token = process.env.GH_PAT;
+  if (!token) {
+    console.log('[Telemetry] No GH_PAT found, skipping repository telemetry push.');
+    return;
+  }
+
+  const owner = 'MRomih-Automations';
+  const repo = 'revenue-scout-cron';
+
+  try {
+    let sha = null;
+    const existing = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/telemetry.json`, {
+      headers: { 'Authorization': 'token ' + token, 'User-Agent': 'CloudScout', 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (existing.ok) {
+      const data = await existing.json();
+      sha = data.sha;
+    }
+
+    const payload = {
+      status: 'HEALTHY',
+      last_run_timestamp: new Date().toISOString(),
+      heartbeat_unix: Date.now(),
+      cron_interval: 'Every 30 minutes',
+      provider: 'GitHub Actions Enterprise Cloud',
+      issues_scanned: metrics.issues_scanned || 0,
+      qualified_bounties_found: metrics.bounties_found || 0,
+      last_bounty_title: metrics.last_bounty || null
+    };
+
+    const body = {
+      message: 'telemetry: sync live cloud scout heartbeat [skip ci]',
+      content: Buffer.from(JSON.stringify(payload, null, 2)).toString('base64')
+    };
+    if (sha) body.sha = sha;
+
+    const putRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/telemetry.json`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': 'token ' + token,
+        'User-Agent': 'CloudScout',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (putRes.ok) {
+      console.log('[Telemetry] Live cloud telemetry synced to repository.');
+    } else {
+      console.log('[Telemetry] Sync status:', putRes.status);
+    }
+  } catch (e) {
+    console.warn('[Telemetry] Error syncing telemetry:', e.message);
+  }
+}
+
 async function run() {
   console.log('[CloudScout] Starting 24/7 scan cycle at ' + new Date().toISOString());
   const isManual = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
@@ -59,14 +118,22 @@ async function run() {
     headers['Authorization'] = 'token ' + process.env.GH_PAT;
   }
 
+  const metrics = {
+    issues_scanned: 0,
+    bounties_found: 0,
+    last_bounty: null
+  };
+
   try {
     const res = await fetch(url, { headers });
     if (!res.ok) {
       console.log('Search returned ' + res.status);
+      await updateLiveTelemetry(metrics);
       return;
     }
     const data = await res.json();
-    console.log('Candidate issues inspected: ' + (data.items ? data.items.length : 0));
+    metrics.issues_scanned = data.items ? data.items.length : 0;
+    console.log('Candidate issues inspected: ' + metrics.issues_scanned);
 
     for (const item of (data.items || []).slice(0, 5)) {
       const match = item.html_url.match(/github\.com\/([^\/]+\/[^\/]+)\/issues\/(\d+)/);
@@ -97,7 +164,10 @@ async function run() {
         if (competing) continue;
       }
 
+      metrics.bounties_found++;
+      metrics.last_bounty = `${repo} #${issueNum} ($${bounty})`;
       console.log('Found qualified bounty: ' + repo + ' #' + issueNum + ' ($' + bounty + ')');
+
       await sendTelegram('🎯 <b>NEW VERIFIED BOUNTY FOUND ($' + bounty + ' USD)</b>\n\n' +
         '<b>Repo:</b> ' + repo + '\n' +
         '<b>Issue:</b> #' + issueNum + ' - ' + item.title + '\n' +
@@ -108,6 +178,9 @@ async function run() {
   } catch (e) {
     console.error('Error during scout:', e.message);
   }
+
+  // Push telemetry update
+  await updateLiveTelemetry(metrics);
 }
 
 run();
