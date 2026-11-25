@@ -22,9 +22,32 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_PAT: ${{ secrets.GH_PAT }}
         run: node brain.js
-      - name: Commit updated memory ledger & telemetry
+      - name: Commit updated memory ledger, telemetry & playbook
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add brain_memory.json telemetry.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(brain): update memory ledger and telemetry [skip ci]" && git push)
+          git add brain_memory.json telemetry.json playbook.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(brain): update memory ledger, telemetry, and playbook [skip ci]" && git push)
+      - name: Notify Telegram on Job Failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 - <<'EOF'
+          import html, json, os, urllib.request
+          text = "\n".join([
+              "🟠 <b>[SYSTEM HEALTH / BREAKDOWN ALERT]</b>",
+              "<b>Workflow:</b> " + html.escape("${{ github.workflow }}"),
+              "<b>Job:</b> " + html.escape("${{ github.job }}"),
+              "<b>Commit:</b> <code>" + html.escape("${{ github.sha }}") + "</code>",
+              "<b>Run URL:</b> ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ])
+          req = urllib.request.Request(
+              f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage",
+              data=json.dumps({"chat_id": os.environ["TELEGRAM_CHAT_ID"], "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          urllib.request.urlopen(req, timeout=15)
+          EOF
