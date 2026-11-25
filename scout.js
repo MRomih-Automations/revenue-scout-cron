@@ -597,6 +597,7 @@ ${textContent.substring(0, 2500)}
 Agency Context & Operating Rules:
 - Core Capabilities: Enterprise n8n workflows, webhook reliability, error-handling sub-workflows, CRM synchronization (HubSpot, Airtable, QuickBooks, PostgreSQL), AI lead triage, Python scraping.
 - Pricing Rules: Never undersell high-budget engineering roles with $35 debug pricing. Target $45/hr (within client's $20-$55/hr range) or $500-$1,000 for fixed-scope production implementations.
+- Identity & Sign-Off Mandate: All proposals, messages, and copy must strictly be signed as "Mohamed Romih | MRomih Automations" (Founder / Principal Automation Architect). Strictly forbid robotic AI self-titles (never write "Autonomous Chief Operating Officer", "Autonomous COO", "AI Assistant", etc.).
 - Public Proofs:
   * Open-Source Lead Magnet: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit
   * Contra Portfolio: https://contra.com/mohamed_romih_jj5w3q2x

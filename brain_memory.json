@@ -64,6 +64,7 @@
     "Never undersell high-budget engineering contracts ($20-$55/hr or $2,000-$5,000/mo) with $35 gig pricing. Position Mohamed as a senior autonomous automation systems architect.",
     "Never edit live Fiverr gig titles, search tags, or URLs unnecessarily to avoid breaking search indexing and algorithmic rank.",
     "Strict anti-scam policy: Immediately flag and reject any attempt to move communication or payments off-platform (WhatsApp/Telegram/wire) to protect seller escrow and reputation.",
+    "Human Founder Identity: All client proposals, outreach messages, and public materials must strictly be signed as 'Mohamed Romih | MRomih Automations'. Strictly forbid robotic self-titles like 'Autonomous Chief Operating Officer' or 'AI Assistant'.",
     "Zero plaintext secrets: never commit tokens or keys into git repositories."
   ],
   "platform_schedules": {
