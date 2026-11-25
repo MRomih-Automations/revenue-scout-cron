@@ -66,6 +66,14 @@ function loadMemory() {
       return JSON.parse(fs.readFileSync(memPath, 'utf8'));
     } catch (e) {
       console.warn('[Scout] Error reading brain_memory.json:', e.message);
+      return {
+        agency: { name: 'MRomih Automations', founder: 'Mohamed Romih' },
+        storefronts: {},
+        operating_rules: [],
+        platform_schedules: {},
+        active_deal_pipeline: [],
+        _parseError: `brain_memory.json parse failure: ${e.message}`
+      };
     }
   }
   return {
@@ -73,7 +81,8 @@ function loadMemory() {
     storefronts: {},
     operating_rules: [],
     platform_schedules: {},
-    active_deal_pipeline: []
+    active_deal_pipeline: [],
+    _parseError: 'brain_memory.json file not found'
   };
 }
 
@@ -84,6 +93,14 @@ function loadPlaybook() {
       return JSON.parse(fs.readFileSync(pbPath, 'utf8'));
     } catch (e) {
       console.warn('[Scout] Error reading playbook.json:', e.message);
+      return {
+        offer_ladder: {},
+        vertical_playbooks: {},
+        objection_handlers: {},
+        content_and_outreach_frameworks: {},
+        discovered_market_patterns: [],
+        _parseError: `playbook.json parse failure: ${e.message}`
+      };
     }
   }
   return {
@@ -91,14 +108,29 @@ function loadPlaybook() {
     vertical_playbooks: {},
     objection_handlers: {},
     content_and_outreach_frameworks: {},
-    discovered_market_patterns: []
+    discovered_market_patterns: [],
+    _parseError: 'playbook.json file not found'
   };
+}
+
+function validateScoutSchemas(memory, playbook) {
+  const errors = [];
+  if (memory._parseError) errors.push(memory._parseError);
+  if (!memory.agency || !memory.agency.founder) errors.push('brain_memory.json missing agency.founder');
+  if (!Array.isArray(memory.active_deal_pipeline)) errors.push('brain_memory.json active_deal_pipeline must be an array');
+
+  if (playbook._parseError) errors.push(playbook._parseError);
+  if (!playbook.offer_ladder || Object.keys(playbook.offer_ladder).length === 0) errors.push('playbook.json missing offer_ladder tiers');
+  if (!playbook.vertical_playbooks || Object.keys(playbook.vertical_playbooks).length === 0) errors.push('playbook.json missing vertical_playbooks');
+  if (!Array.isArray(playbook.discovered_market_patterns)) errors.push('playbook.json discovered_market_patterns must be an array');
+  return errors;
 }
 
 function formatPlaybookContext(playbook) {
   return JSON.stringify({
     offer_ladder: playbook.offer_ladder || {},
     vertical_playbooks: playbook.vertical_playbooks || {},
+    competitive_positioning: playbook.competitive_positioning || {},
     objection_handlers: playbook.objection_handlers || {},
     discovered_market_patterns: (playbook.discovered_market_patterns || []).slice(-5)
   }, null, 2);
@@ -157,12 +189,43 @@ function sendTelegram(htmlText) {
   });
 }
 
+const _sentHealthAlertKeys = new Set();
+
+function formatHealthAlertHtml(component, issueSummary, errorDetails) {
+  const safeComp = escapeHtml(component || 'Cloud Scout');
+  const safeIssue = escapeHtml(issueSummary || 'Runtime degradation detected');
+  const safeDetails = errorDetails ? `\n<pre>${escapeHtml(String(errorDetails).slice(0, 1200))}</pre>\n` : '\n';
+  return (
+    `🟠 <b>[SYSTEM HEALTH / BREAKDOWN ALERT]</b>\n` +
+    `<b>Component:</b> <code>${safeComp}</code>\n` +
+    `<b>Issue:</b> ${safeIssue}\n` +
+    `<b>Timestamp (UTC):</b> <code>${new Date().toISOString()}</code>` +
+    safeDetails +
+    `\n🛠️ <i>Immediate diagnostic review recommended (Cloud Scout Watchdog).</i>`
+  );
+}
+
+async function sendHealthAlert(component, issueSummary, errorDetails) {
+  const dedupeKey = `${component}::${issueSummary}`;
+  if (_sentHealthAlertKeys.has(dedupeKey)) return;
+  _sentHealthAlertKeys.add(dedupeKey);
+
+  const htmlMsg = formatHealthAlertHtml(component, issueSummary, errorDetails);
+  console.error(`🟠 [HEALTH WATCHDOG] ${component}: ${issueSummary}`);
+  await sendTelegram(htmlMsg);
+}
+
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) {
+    await sendHealthAlert('Gemini API (Cloud Scout)', 'GEMINI_API_KEY missing in environment', 'Check scout_cron.yml env and repo Secrets');
     throw new Error('GEMINI_API_KEY is not configured in Scout.');
   }
 
   const models = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash', 'gemini-flash-latest'];
+  const failures = [];
+  let authErrors = 0;
+  let rateLimitErrors = 0;
+
   for (const m of models) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${GEMINI_API_KEY}`;
@@ -177,15 +240,35 @@ async function callGemini(prompt) {
       if (res.status === 200) {
         const json = await res.json();
         const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
+        if (text) {
+          if (authErrors >= 1 || rateLimitErrors >= 2) {
+            await sendHealthAlert(
+              'Gemini API Degradation (Cloud Scout)',
+              `Fallback succeeded on ${m} after repeated auth/rate-limit errors`,
+              failures.join('\n')
+            );
+          }
+          return text;
+        }
+        failures.push(`${m}: HTTP 200 empty response text`);
       } else {
+        if (res.status === 401 || res.status === 403) authErrors++;
+        if (res.status === 429) rateLimitErrors++;
+        const errBody = await res.text().catch(() => '');
+        failures.push(`${m}: HTTP ${res.status} ${errBody.slice(0, 140)}`);
         await new Promise(r => setTimeout(r, 1000));
       }
     } catch (e) {
+      failures.push(`${m}: ${e.message}`);
       await new Promise(r => setTimeout(r, 1000));
     }
   }
 
+  await sendHealthAlert(
+    'Gemini API Failure (Cloud Scout)',
+    'All Gemini models failed after retries',
+    failures.join('\n')
+  );
   throw new Error('All Gemini API models failed in Scout.');
 }
 
@@ -249,10 +332,13 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
     if (putRes.ok) {
       console.log('[Telemetry] Live cloud telemetry synced to repository.');
     } else {
+      const errText = await putRes.text().catch(() => '');
       console.log('[Telemetry] Sync status:', putRes.status);
+      await sendHealthAlert('Cloud Scout Telemetry Persistence', `GitHub Contents API PUT failed with HTTP ${putRes.status}`, errText);
     }
   } catch (e) {
     console.warn('[Telemetry] Error syncing telemetry:', e.message);
+    await sendHealthAlert('Cloud Scout Telemetry Persistence', 'Exception syncing telemetry.json to GitHub', e.stack || e.message);
   }
 }
 
@@ -835,11 +921,20 @@ async function run() {
   const isDryRun = process.argv.includes('--dry-run');
   const memory = loadMemory();
   const playbook = loadPlaybook();
+  const schemaErrors = validateScoutSchemas(memory, playbook);
 
   console.log(`[CloudScout] Loaded playbook.json: ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns.`);
 
+  if (schemaErrors.length > 0) {
+    if (!isDryRun) {
+      await sendHealthAlert('Schema Validation (Cloud Scout)', 'brain_memory.json or playbook.json failed schema validation', schemaErrors.join('\n'));
+    } else {
+      throw new Error(`Schema validation failed during --dry-run: ${schemaErrors.join('; ')}`);
+    }
+  }
+
   if (isDryRun) {
-    console.log('[CloudScout] --dry-run passed: verified brain_memory.json and playbook.json load cleanly.');
+    console.log('[CloudScout] --dry-run passed: verified brain_memory.json and playbook.json load cleanly with 0 schema errors.');
     return;
   }
 
@@ -883,4 +978,8 @@ async function run() {
   console.log('[CloudScout] Autonomous technical scout cycle completed successfully.');
 }
 
-run();
+run().catch(async err => {
+  console.error('[CloudScout] Fatal error:', err);
+  await sendHealthAlert('Cloud Scout Crash Guard', 'Unhandled exception terminated scout.js execution', err.stack || err.message);
+  process.exit(1);
+});

@@ -81,6 +81,15 @@ function getDefaultMemory() {
       winning_angles: []
     },
     staged_linkedin_posts: [],
+    system_health_baselines: {
+      gmail_spectator_minutes: 5,
+      scout_minutes: 30,
+      brain_hours: 24,
+      scout_stall_threshold_hours: 3,
+      overall_status: 'HEALTHY',
+      last_verified_healthy_at: new Date().toISOString(),
+      components: {}
+    },
     storefronts: {},
     operating_rules: [
       'Strict $0 upfront spend: zero paid ads, zero paid subscriptions.',
@@ -108,26 +117,38 @@ function loadMemory() {
   if (fs.existsSync(memPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(memPath, 'utf8'));
-      return {
+      const mem = {
         ...defaults,
         ...parsed,
         conversion_funnel: {
           ...defaults.conversion_funnel,
           ...(parsed.conversion_funnel || {})
         },
+        system_health_baselines: {
+          ...defaults.system_health_baselines,
+          ...(parsed.system_health_baselines || {})
+        },
         executive_charter: parsed.executive_charter || defaults.executive_charter
       };
+      mem._rawPresent = true;
+      return mem;
     } catch (e) {
       console.warn('[CEO Brain] Error parsing brain_memory.json:', e.message);
+      defaults._parseError = `brain_memory.json parse failure: ${e.message}`;
     }
+  } else {
+    defaults._parseError = 'brain_memory.json file not found';
   }
   return defaults;
 }
 
 function saveMemory(mem) {
   const memPath = path.join(__dirname, 'brain_memory.json');
-  mem.last_updated = new Date().toISOString();
-  fs.writeFileSync(memPath, JSON.stringify(mem, null, 2), 'utf8');
+  const clean = { ...mem };
+  delete clean._rawPresent;
+  delete clean._parseError;
+  clean.last_updated = new Date().toISOString();
+  fs.writeFileSync(memPath, JSON.stringify(clean, null, 2), 'utf8');
   console.log('💾 [CEO Brain] Persistent memory ledger saved.');
 }
 
@@ -139,9 +160,21 @@ function loadPlaybook() {
       if (!Array.isArray(parsed.discovered_market_patterns)) {
         parsed.discovered_market_patterns = [];
       }
+      parsed._rawPresent = true;
       return parsed;
     } catch (e) {
       console.warn('[CEO Brain] Error parsing playbook.json:', e.message);
+      return {
+        schema_version: '1.0.0',
+        last_updated: new Date().toISOString(),
+        owner: 'Mohamed Romih | MRomih Automations',
+        offer_ladder: {},
+        vertical_playbooks: {},
+        objection_handlers: {},
+        content_and_outreach_frameworks: {},
+        discovered_market_patterns: [],
+        _parseError: `playbook.json parse failure: ${e.message}`
+      };
     }
   }
   return {
@@ -152,15 +185,63 @@ function loadPlaybook() {
     vertical_playbooks: {},
     objection_handlers: {},
     content_and_outreach_frameworks: {},
-    discovered_market_patterns: []
+    discovered_market_patterns: [],
+    _parseError: 'playbook.json file not found'
   };
 }
 
 function savePlaybook(pb) {
   const pbPath = path.join(__dirname, 'playbook.json');
-  pb.last_updated = new Date().toISOString();
-  fs.writeFileSync(pbPath, JSON.stringify(pb, null, 2), 'utf8');
+  const clean = { ...pb };
+  delete clean._rawPresent;
+  delete clean._parseError;
+  clean.last_updated = new Date().toISOString();
+  fs.writeFileSync(pbPath, JSON.stringify(clean, null, 2), 'utf8');
   console.log('📘 [CEO Brain] Commercial playbook.json saved locally.');
+}
+
+const _sentHealthAlertKeys = new Set();
+
+function formatHealthAlertHtml(component, issueSummary, errorDetails) {
+  const safeComp = escapeHtml(component || 'Unknown Component');
+  const safeIssue = escapeHtml(issueSummary || 'Runtime health degradation detected');
+  const safeDetails = errorDetails ? `\n<pre>${escapeHtml(String(errorDetails).slice(0, 1200))}</pre>\n` : '\n';
+  return (
+    `🟠 <b>[SYSTEM HEALTH / BREAKDOWN ALERT]</b>\n` +
+    `<b>Component:</b> <code>${safeComp}</code>\n` +
+    `<b>Issue:</b> ${safeIssue}\n` +
+    `<b>Timestamp (UTC):</b> <code>${new Date().toISOString()}</code>` +
+    safeDetails +
+    `\n🛠️ <i>Immediate diagnostic review recommended (Watchdog Sentinel).</i>`
+  );
+}
+
+async function sendHealthAlert(component, issueSummary, errorDetails) {
+  const dedupeKey = `${component}::${issueSummary}`;
+  if (_sentHealthAlertKeys.has(dedupeKey)) return;
+  _sentHealthAlertKeys.add(dedupeKey);
+
+  const htmlMsg = formatHealthAlertHtml(component, issueSummary, errorDetails);
+  console.error(`🟠 [HEALTH WATCHDOG] ${component}: ${issueSummary}`);
+  await sendTelegramAlert(htmlMsg);
+}
+
+function validateSystemSchemas(memory, playbook) {
+  const errors = [];
+  if (memory._parseError) errors.push(memory._parseError);
+  if (!memory.agency || !memory.agency.founder) errors.push('brain_memory.json missing agency.founder');
+  if (!memory.executive_charter || !memory.executive_charter.north_star_goal) errors.push('brain_memory.json missing executive_charter');
+  if (!memory.platform_schedules || typeof memory.platform_schedules !== 'object') errors.push('brain_memory.json missing platform_schedules');
+  if (!Array.isArray(memory.active_deal_pipeline)) errors.push('brain_memory.json active_deal_pipeline must be an array');
+  if (!memory.system_health_baselines || typeof memory.system_health_baselines !== 'object') errors.push('brain_memory.json missing system_health_baselines');
+
+  if (playbook._parseError) errors.push(playbook._parseError);
+  if (!playbook.offer_ladder || Object.keys(playbook.offer_ladder).length === 0) errors.push('playbook.json missing offer_ladder tiers');
+  if (!playbook.vertical_playbooks || Object.keys(playbook.vertical_playbooks).length === 0) errors.push('playbook.json missing vertical_playbooks');
+  if (!playbook.objection_handlers || typeof playbook.objection_handlers !== 'object') errors.push('playbook.json missing objection_handlers');
+  if (!Array.isArray(playbook.discovered_market_patterns)) errors.push('playbook.json discovered_market_patterns must be an array');
+
+  return errors;
 }
 
 function sanitizeClientCopy(text) {
@@ -579,10 +660,15 @@ function evaluateGovernanceSchedules(memory, repoTemplates = []) {
 
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) {
+    await sendHealthAlert('Gemini API (Brain)', 'GEMINI_API_KEY missing in environment', 'Set GEMINI_API_KEY in GitHub Secrets / .env');
     throw new Error('GEMINI_API_KEY is not configured in CEO Brain.');
   }
 
   const models = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash', 'gemini-flash-latest'];
+  const failures = [];
+  let authErrors = 0;
+  let rateLimitErrors = 0;
+
   for (const m of models) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${GEMINI_API_KEY}`;
@@ -597,15 +683,35 @@ async function callGemini(prompt) {
       if (res.status === 200) {
         const json = await res.json();
         const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
+        if (text) {
+          if (authErrors >= 1 || rateLimitErrors >= 2) {
+            await sendHealthAlert(
+              'Gemini API Degradation (Brain)',
+              `Fallback succeeded on ${m} after repeated auth/rate-limit errors`,
+              failures.join('\n')
+            );
+          }
+          return text;
+        }
+        failures.push(`${m}: HTTP 200 empty response text`);
       } else {
+        if (res.status === 401 || res.status === 403) authErrors++;
+        if (res.status === 429) rateLimitErrors++;
+        const errBody = await res.text().catch(() => '');
+        failures.push(`${m}: HTTP ${res.status} ${errBody.slice(0, 140)}`);
         await new Promise(r => setTimeout(r, 1000));
       }
     } catch (e) {
+      failures.push(`${m}: ${e.message}`);
       await new Promise(r => setTimeout(r, 1000));
     }
   }
 
+  await sendHealthAlert(
+    'Gemini API Failure (Brain)',
+    'All Gemini models failed after retries',
+    failures.join('\n')
+  );
   throw new Error('All Gemini API models failed in CEO Brain.');
 }
 
@@ -651,10 +757,12 @@ async function commitGitHubFile(repo, filePath, contentStr, commitMessage) {
     } else {
       const err = await putRes.text();
       console.warn(`[GitHub Commit] Failed to commit ${filePath} to ${repo}: ${err}`);
+      await sendHealthAlert('GitHub Contents API (Brain)', `Failed committing ${owner}/${repo}/${filePath} (HTTP ${putRes.status})`, err);
       return false;
     }
   } catch (err) {
     console.error(`[GitHub Commit] Error committing ${filePath} to ${repo}:`, err.message);
+    await sendHealthAlert('GitHub Contents API (Brain)', `Exception committing ${owner}/${repo}/${filePath}`, err.stack || err.message);
     return false;
   }
 }
@@ -913,19 +1021,82 @@ ${JSON.stringify({ vertical_playbooks: Object.keys(playbook.vertical_playbooks |
   }
 }
 
+async function auditSystemHealthBaselines(memory, telemetry) {
+  const baselines = memory.system_health_baselines || {};
+  const thresholdHours = Number(baselines.scout_stall_threshold_hours) || 3;
+  const nowIso = new Date().toISOString();
+  const scoutTs = telemetry && telemetry.last_run_timestamp ? telemetry.last_run_timestamp : null;
+  const ageHours = scoutTs ? (Date.now() - new Date(scoutTs).getTime()) / 3600000 : Infinity;
+
+  if (!baselines.components) baselines.components = {};
+
+  let scoutHealthy = true;
+  let statusLine = '';
+  if (!scoutTs || Number.isNaN(ageHours) || ageHours > thresholdHours) {
+    scoutHealthy = false;
+    const ageLabel = Number.isFinite(ageHours) ? `${ageHours.toFixed(1)}h ago` : 'missing timestamp';
+    baselines.overall_status = 'DEGRADED';
+    baselines.components.cloud_scout = {
+      interval_minutes: baselines.scout_minutes || 30,
+      status: 'STALLED',
+      last_verified: scoutTs || 'unknown'
+    };
+    statusLine = `🟠 <b>DEGRADED:</b> Cloud Scout heartbeat stale (${ageLabel} &gt; ${thresholdHours}h threshold).`;
+    await sendHealthAlert(
+      'Cloud Scout Silent Stall Watchdog',
+      `scout.js telemetry heartbeat is ${ageLabel} (exceeds ${thresholdHours}h SLA)`,
+      `last_run_timestamp=${scoutTs || 'missing'} | provider=${telemetry?.provider || 'unknown'}`
+    );
+  } else {
+    baselines.overall_status = 'HEALTHY';
+    baselines.last_verified_healthy_at = nowIso;
+    baselines.components.cloud_scout = {
+      interval_minutes: baselines.scout_minutes || 30,
+      status: 'HEALTHY',
+      last_verified: scoutTs
+    };
+    baselines.components.ceo_brain = {
+      interval_hours: baselines.brain_hours || 24,
+      status: 'HEALTHY',
+      last_verified: nowIso
+    };
+    if (!baselines.components.gmail_spectator) {
+      baselines.components.gmail_spectator = {
+        interval_minutes: baselines.gmail_spectator_minutes || 5,
+        status: 'HEALTHY',
+        last_verified: nowIso
+      };
+    }
+    statusLine = `🟢 <b>HEALTHY:</b> Scout last heartbeat ${ageHours.toFixed(1)}h ago (SLA &lt;${thresholdHours}h) | Brain 24h &amp; Gmail 5m baselines nominal.`;
+  }
+
+  memory.system_health_baselines = baselines;
+  return { scoutHealthy, ageHours, statusLine };
+}
+
 async function run() {
   const isDryRun = process.argv.includes('--dry-run');
   console.log('🧠 [CEO Brain] Initializing Executive Intelligence v2 Cycle...');
 
   const memory = loadMemory();
   const playbook = loadPlaybook();
+  const schemaErrors = validateSystemSchemas(memory, playbook);
   console.log(`📘 [CEO Brain] Loaded playbook.json (${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns).`);
+
+  if (schemaErrors.length > 0) {
+    if (!isDryRun) {
+      await sendHealthAlert('Schema Validation (Brain)', 'brain_memory.json or playbook.json failed schema validation', schemaErrors.join('\n'));
+    } else {
+      throw new Error(`Schema validation failed during --dry-run: ${schemaErrors.join('; ')}`);
+    }
+  }
 
   if (isDryRun) {
     const governance = evaluateGovernanceSchedules(memory, []);
-    console.log('[CEO Brain] --dry-run passed: loaded brain_memory.json and playbook.json cleanly.', {
+    console.log('[CEO Brain] --dry-run passed: loaded brain_memory.json and playbook.json cleanly with 0 schema errors.', {
       knowledgeDistillationDue: governance.knowledgeDistillationDue,
       distillSignalCount: governance.distillSignalCount,
+      systemHealthBaselines: memory.system_health_baselines?.overall_status,
       schedules: Object.keys(governance.scheduleStatus)
     });
     return;
@@ -935,6 +1106,7 @@ async function run() {
   const phoneSyncEvents = await syncTelegramCommands(memory);
 
   const telemetry = await fetchTelemetry();
+  const healthAudit = await auditSystemHealthBaselines(memory, telemetry);
   const n8nJobs = await fetchN8nJobs();
   const opireBounties = await fetchOpireRewards();
   const hnHits = await fetchHnHits();
@@ -959,6 +1131,8 @@ Executive Charter & Commercial Playbook:
 - Conversion Funnel: ${JSON.stringify(memory.conversion_funnel, null, 2)}
 - Offer Ladder: ${JSON.stringify(playbook.offer_ladder, null, 2)}
 - Vertical Playbooks Keys: ${JSON.stringify(Object.keys(playbook.vertical_playbooks || {}))}
+- Competitive Positioning: ${JSON.stringify(playbook.competitive_positioning || {}, null, 2)}
+- System Health Audit: ${healthAudit.statusLine}
 - Discovered Market Patterns: ${JSON.stringify((playbook.discovered_market_patterns || []).slice(-5), null, 2)}
 - Recent Phone Sync Updates (@RomihCO_bot): ${phoneSyncEvents.length > 0 ? JSON.stringify(phoneSyncEvents) : 'None this cycle'}
 
@@ -1315,6 +1489,8 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     `${builderReport}\n\n` +
     `📚 <b>Weekly Knowledge Distillation (<code>playbook.json</code>):</b>\n` +
     `${distillationReport}\n\n` +
+    `🛡️ <b>System Health Watchdog:</b>\n` +
+    `${healthAudit.statusLine}\n\n` +
     `💡 <b>Learned Insight:</b>\n` +
     `<i>"${escapeHtml(analysis.learned_insight)}"</i>\n\n`;
 
@@ -1336,7 +1512,8 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
   console.log('✅ [CEO Brain] Executive Intelligence v2 cycle completed.');
 }
 
-run().catch(err => {
+run().catch(async err => {
   console.error('Fatal error in CEO Brain:', err);
+  await sendHealthAlert('CEO Brain Crash Guard', 'Unhandled exception terminated brain.js execution', err.stack || err.message);
   process.exit(1);
 });

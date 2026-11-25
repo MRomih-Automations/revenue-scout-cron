@@ -37,6 +37,31 @@
     "winning_angles": []
   },
   "staged_linkedin_posts": [],
+  "system_health_baselines": {
+    "gmail_spectator_minutes": 5,
+    "scout_minutes": 30,
+    "brain_hours": 24,
+    "scout_stall_threshold_hours": 3,
+    "overall_status": "HEALTHY",
+    "last_verified_healthy_at": "2026-11-25T22:27:00.000Z",
+    "components": {
+      "gmail_spectator": {
+        "interval_minutes": 5,
+        "status": "HEALTHY",
+        "last_verified": "2026-11-25T21:17:41.000Z"
+      },
+      "cloud_scout": {
+        "interval_minutes": 30,
+        "status": "HEALTHY",
+        "last_verified": "2026-11-25T20:40:12.329Z"
+      },
+      "ceo_brain": {
+        "interval_hours": 24,
+        "status": "HEALTHY",
+        "last_verified": "2026-11-25T20:38:03.947Z"
+      }
+    }
+  },
   "storefronts": {
     "fiverr": {
       "username": "mromih7",
