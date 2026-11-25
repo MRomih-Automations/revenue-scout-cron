@@ -77,6 +77,27 @@ function loadMemory() {
   };
 }
 
+function getTrackedTopicIds(memory) {
+  const tracked = new Set([330154, 329131, 329465]);
+  
+  for (const deal of (memory.active_deal_pipeline || [])) {
+    if (deal.source_url) {
+      const m = deal.source_url.match(/\/(\d+)/);
+      if (m) tracked.add(parseInt(m[1], 10));
+    }
+  }
+
+  for (const dir of (memory.past_directives || [])) {
+    const text = (dir.synthesis || '') + ' ' + (dir.reason || '');
+    const matches = text.match(/#(\d{5,7})/g);
+    if (matches) {
+      matches.forEach(m => tracked.add(parseInt(m.replace('#', ''), 10)));
+    }
+  }
+
+  return tracked;
+}
+
 function sendTelegram(htmlText) {
   return new Promise((resolve, reject) => {
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -467,6 +488,8 @@ Output JSON:
 
 async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory) {
   console.log('[CloudScout] Scanning n8n Community Jobs category...');
+  const appliedTopicIds = getTrackedTopicIds(memory);
+
   try {
     const res = await fetch('https://community.n8n.io/c/jobs/13.json', {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MRomih-Scout/2.0' }
@@ -489,7 +512,8 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory) {
         lower.includes('looking for n8n') ||
         lower.includes('looking for projects') ||
         lower.includes('available for hire') ||
-        lower.includes('for hire')
+        lower.includes('for hire') ||
+        /\b(unpaid|commission-based|commission only|commission-only|equity only|equity-only|pre-revenue|pre revenue)\b/i.test(lower)
       ) {
         return false;
       }
@@ -502,7 +526,10 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory) {
       const createdTime = new Date(topic.created_at).getTime();
       if (createdTime < fourteenDaysAgo) continue;
 
-      if (seenN8nTopics.has(topic.id)) continue;
+      // Skip if seen in current session or already applied in memory pipeline
+      if (seenN8nTopics.has(topic.id) || appliedTopicIds.has(topic.id)) {
+        continue;
+      }
 
       // 1. Fetch full topic body from Discourse API
       let fullTopic = null;
@@ -532,6 +559,12 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory) {
       const firstPost = fullTopic.post_stream?.posts?.[0];
       const rawHtml = firstPost?.cooked || '';
       const textContent = rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+      const badTermsRegex = /\b(unpaid|commission-based|commission only|commission-only|equity only|equity-only|pre-revenue|pre revenue)\b/i;
+      if (badTermsRegex.test(fullTopic.title) || badTermsRegex.test(textContent)) {
+        console.log(`[n8n Community] Skipping unpaid/commission/pre-revenue topic #${topic.id}`);
+        continue;
+      }
 
       if (/position (?:has been )?filled|no longer accepting|closed for applications/i.test(textContent)) {
         console.log(`[n8n Community] Skipping filled post body in #${topic.id}`);
@@ -661,12 +694,13 @@ async function scanHackerNews(metrics, seenHnIds, memory) {
 
         const text = (hit.comment_text || hit.story_text || hit.title || '').toLowerCase();
         
-        // Filter strictly for commercial/hiring intent
-        const hasIntent = 
-          (/\b(hiring|looking for|need someone|freelance|contractor|paid|bounty|budget)\b/i.test(text)) &&
-          (/\b(n8n|scrape|scraper|scraping|automation|workflow|pipeline)\b/i.test(text));
+        // Filter strictly for explicit commercial hiring/freelance posts
+        const isExplicitHiring = 
+          /\b(who is hiring|who's hiring|freelancer wanted|seeking freelancer|seeking contractor)\b/i.test(text) ||
+          (/\b(hiring|looking to hire|need a freelancer|need a contractor|looking for a freelancer|looking for a contractor)\b/i.test(text) &&
+           /\b(n8n|web scraper|python scraper|data extraction|automation engineer|automation developer)\b/i.test(text));
 
-        if (!hasIntent) continue;
+        if (!isExplicitHiring) continue;
 
         // Skip obvious spam or off-topic job board advertisements
         if (/we are hiring|join our team at bigtech|apply at linkedin\.com\/jobs/i.test(text)) continue;

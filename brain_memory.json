@@ -107,6 +107,21 @@
       "follow_up_due_at": "2026-11-27T19:30:00Z",
       "follow_up_staged": true,
       "follow_up_copy": "Hi Francois,\n\nThanks for connecting! Your focus on production n8n workflows and AI agents for small-business ops (scheduling, telephony, CRM, and accounting APIs) aligns directly with our core engineering stack.\n\nWe architect autonomous n8n pipelines with enterprise reliability patterns—including webhook verification, sub-workflow error routing, and live CRM synchronization. You can inspect an open-source example of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur live workflow case studies are available at:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nRate & Availability:\n- Target Rate: $45/hr (within your $20–$55/hr budget)\n- Availability: 20–30 hrs/week; available for the weekly sync and ready to kick off with the small paid trial task immediately.\n\nGlad to hop on a quick 20-minute intro call this week—let me know what time works best.\n\nBest regards,\nMohamed Romih | MRomih Automations"
+    },
+    {
+      "id": "kkrova_airtable_gumroad_329131",
+      "company": "Gumroad Store (kkrova)",
+      "contact_person": "kkrova",
+      "source": "n8n Community Jobs #329131",
+      "source_url": "https://community.n8n.io/t/hiring-freelancer-for-airtable-workflow-remote/329131",
+      "application_method": "Airtable Form (https://airtable.com/appkK1MZ2cLhJYQlR/pagE4pCmCjCzloG9u/form)",
+      "role": "Freelancer for Airtable / Gumroad Workflow",
+      "budget": "$1,000 ($650 fixed / $45/hr pitched)",
+      "status": "PROPOSAL_SUBMITTED_AIRTABLE_FORM",
+      "submitted_at": "2026-11-25T20:57:42Z",
+      "follow_up_due_at": "2026-11-28T20:57:42Z",
+      "follow_up_staged": true,
+      "proposal_copy": "Hi kkrova,\n\nI’m Mohamed Romih, Founder and Principal Automation Architect at MRomih Automations. I read your post regarding your upcoming Gumroad store launch and your past frustrating experience with unreliable freelancers. Building bulletproof, production-grade syncs is our core specialty.\n\nTo ensure your data flows seamlessly without silent failures, we engineer resilient pipelines rather than basic triggers. For your project, we will implement:\n- Cryptographic Webhook Verification (HMAC SHA-256) so only authentic Gumroad events are processed\n- Idempotency & Duplicate Prevention using transaction IDs so records never double-write in Airtable\n- Enterprise Error-Handling Sub-Workflows with instant alerting and payload logging so zero sales slip through\n\nYou can inspect an open-source example of our n8n architecture here: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and view our live workflow case studies on Contra: https://contra.com/mohamed_romih_jj5w3q2x.\n\nI am submitting my proposal directly through your Airtable form and am ready to build, test, and document this pipeline cleanly before your store launch.\n\nBest regards,\nMohamed Romih | MRomih Automations"
     }
   ],
   "published_templates": [
@@ -137,6 +152,12 @@
       "synthesis": "Live lead feeds show high-intent demand for SMB n8n integrations, specifically around Stripe/Gumroad to Airtable sales syncing (stemming from recent s",
       "action_required": false,
       "reason": "Zero human intervention required. All governance timers are healthy, lead magnet template expansion is being executed autonomously, and the Steek Lab follow-up is safely staged for November 27."
+    },
+    {
+      "timestamp": "2026-11-25T20:58:00.000Z",
+      "synthesis": "Applied to Gumroad/Airtable workflow lead #329131 ($1,000 budget, kkrova) via Airtable application form; inspected and skipped Solari #329465 (strictly US work authorization and US residency required).",
+      "action_required": false,
+      "reason": "Application successfully submitted through Airtable form; confirmation verified; follow-up timer staged for November 28."
     }
   ],
   "market_research_notes": [
