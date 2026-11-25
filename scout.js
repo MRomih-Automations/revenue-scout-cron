@@ -1,12 +1,25 @@
 /**
- * 24/7 Cloud Scout & Telegram Alert Engine
- * Self-contained runner for GitHub Actions.
- * Automatically scans Algora and Opire USD bounties every 30 minutes.
- * Automatically updates live telemetry.json on each run.
+ * 24/7 Cloud Scout & Telegram Advisor Alert Engine
+ * Self-contained runner for GitHub Actions (MRomih-Automations/revenue-scout-cron).
+ * Automatically scans:
+ * 1. Algora USD Escrow Bounties (< 60 days, 0 competing PRs)
+ * 2. Opire USD Bounties (verified open, 0 competing PRs, non-token)
+ * 3. n8n Community Jobs (https://community.n8n.io/c/jobs/13.json)
+ *
+ * All alerts are sent via JSON POST with parse_mode: 'HTML' to prevent $ stripping,
+ * and conclude with actionable ⚡ Action Required guidance for the user.
  */
 const https = require('node:https');
 
-function sendTelegram(text) {
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function sendTelegram(htmlText) {
   return new Promise((resolve, reject) => {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -16,9 +29,9 @@ function sendTelegram(text) {
     }
     const data = JSON.stringify({
       chat_id: chatId,
-      text: text,
+      text: htmlText,
       parse_mode: 'HTML',
-      disable_web_page_preview: false
+      disable_web_page_preview: true
     });
     const req = https.request({
       hostname: 'api.telegram.org',
@@ -40,7 +53,7 @@ function sendTelegram(text) {
   });
 }
 
-async function updateLiveTelemetry(metrics) {
+async function updateLiveTelemetry(metrics, seenN8nTopics) {
   const token = process.env.GH_PAT;
   if (!token) {
     console.log('[Telemetry] No GH_PAT found, skipping repository telemetry push.');
@@ -52,13 +65,20 @@ async function updateLiveTelemetry(metrics) {
 
   try {
     let sha = null;
+    let existingSeen = [];
     const existing = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/telemetry.json`, {
       headers: { 'Authorization': 'token ' + token, 'User-Agent': 'CloudScout', 'Accept': 'application/vnd.github.v3+json' }
     });
     if (existing.ok) {
       const data = await existing.json();
       sha = data.sha;
+      try {
+        const parsed = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+        if (Array.isArray(parsed.seen_n8n_topics)) existingSeen = parsed.seen_n8n_topics;
+      } catch (e) {}
     }
+
+    const mergedSeen = Array.from(new Set([...existingSeen, ...(seenN8nTopics || [])])).slice(-100);
 
     const payload = {
       status: 'HEALTHY',
@@ -68,7 +88,8 @@ async function updateLiveTelemetry(metrics) {
       provider: 'GitHub Actions Enterprise Cloud',
       issues_scanned: metrics.issues_scanned || 0,
       qualified_bounties_found: metrics.bounties_found || 0,
-      last_bounty_title: metrics.last_bounty || null
+      last_bounty_title: metrics.last_bounty || null,
+      seen_n8n_topics: mergedSeen
     };
 
     const body = {
@@ -153,12 +174,18 @@ async function scanAlgoraBounties(headers, metrics) {
       metrics.last_bounty = `${repo} #${issueNum} ($${bounty} Algora)`;
       console.log('[Algora] Qualified bounty found: ' + repo + ' #' + issueNum + ' ($' + bounty + ')');
 
-      await sendTelegram('🎯 <b>NEW VERIFIED ALGORA BOUNTY ($' + bounty + ' USD)</b>\n\n' +
-        '<b>Repo:</b> ' + repo + '\n' +
-        '<b>Issue:</b> #' + issueNum + ' - ' + item.title + '\n' +
-        '<b>Escrow:</b> Algora USD ($' + bounty + ')\n' +
-        '<b>Competing PRs:</b> 0\n\n' +
-        '🔗 <a href="' + item.html_url + '">View Issue on GitHub</a>');
+      const alertMsg = 
+        `🎯 <b>NEW VERIFIED ALGORA BOUNTY ($${bounty} USD)</b>\n\n` +
+        `<b>Repo:</b> <code>${escapeHtml(repo)}</code>\n` +
+        `<b>Issue:</b> #${issueNum} - ${escapeHtml(item.title)}\n` +
+        `<b>Escrow:</b> Algora USD ($${bounty})\n` +
+        `<b>Competing PRs:</b> 0 (Clean Escrow Opportunity)\n\n` +
+        `🔗 <a href="${item.html_url}">View Issue on GitHub</a>\n\n` +
+        `⚡ <b>Action Required:</b>\n` +
+        `1. Inspect the issue link on GitHub.\n` +
+        `2. Open <b>Antigravity</b> on your PC with the repository and issue URL to analyze the codebase, reproduce the bug, and prepare the pull request with zero competing PRs.`;
+
+      await sendTelegram(alertMsg);
     }
   } catch (err) {
     console.error('[Algora] Scan error:', err.message);
@@ -193,63 +220,121 @@ async function scanOpireBounties(headers, metrics) {
       const repo = match[1];
       const issueNum = match[2];
 
-      // Currency validation: only USD
       let bounty = 0;
       if (item.pendingPrice && item.pendingPrice.unit === 'USD_CENT') {
         bounty = item.pendingPrice.value / 100;
       } else {
-        console.log('[Opire] Skipping non-USD reward: ' + JSON.stringify(item.pendingPrice));
         continue;
       }
 
-      // Filter out token rewards and explicit blocked terms
       if (/rustchain|scottcjn/i.test(repo) || /\b(RTC|token|tokens|airdrop|social mining|hcaptcha|captcha)\b/i.test(item.title)) {
-        console.log('[Opire] Skipping blocked repo/keyword: ' + repo + ' - ' + item.title);
         continue;
       }
 
       if (bounty < 30) continue;
 
-      // Verify via GitHub Issues API
       const issueRes = await fetch('https://api.github.com/repos/' + repo + '/issues/' + issueNum, { headers });
       if (!issueRes.ok) continue;
       const issueData = await issueRes.json();
       if (issueData.state !== 'open' || issueData.pull_request) {
-        console.log('[Opire] Issue is not open: ' + repo + ' #' + issueNum);
         continue;
       }
 
-      // Check for competing open PRs
       const pRes = await fetch('https://api.github.com/repos/' + repo + '/pulls?state=open&per_page=15', { headers });
       if (pRes.ok) {
         const pulls = await pRes.json();
         const competing = pulls.some(pr => new RegExp('#' + issueNum + '\\b|fixes.*#' + issueNum, 'i').test(pr.title + ' ' + (pr.body || '')));
-        if (competing) {
-          console.log('[Opire] Competing open PR exists for: ' + repo + ' #' + issueNum);
-          continue;
-        }
+        if (competing) continue;
       }
 
       metrics.bounties_found++;
       metrics.last_bounty = `${repo} #${issueNum} ($${bounty} Opire)`;
       console.log('[Opire] Qualified bounty found: ' + repo + ' #' + issueNum + ' ($' + bounty + ')');
 
-      await sendTelegram('🎯 <b>NEW VERIFIED OPIRE BOUNTY ($' + bounty + ' USD)</b>\n\n' +
-        '<b>Repo:</b> ' + repo + '\n' +
-        '<b>Issue:</b> #' + issueNum + ' - ' + (issueData.title || item.title) + '\n' +
-        '<b>Escrow:</b> Opire USD ($' + bounty + ')\n' +
-        '<b>Competing PRs:</b> 0\n\n' +
-        '🔗 <a href="' + item.url + '">View Issue on GitHub</a>');
+      const alertMsg = 
+        `🎯 <b>NEW VERIFIED OPIRE BOUNTY ($${bounty} USD)</b>\n\n` +
+        `<b>Repo:</b> <code>${escapeHtml(repo)}</code>\n` +
+        `<b>Issue:</b> #${issueNum} - ${escapeHtml(issueData.title || item.title)}\n` +
+        `<b>Escrow:</b> Opire USD ($${bounty})\n` +
+        `<b>Competing PRs:</b> 0 (Clean Escrow Opportunity)\n\n` +
+        `🔗 <a href="${item.url}">View Issue on GitHub</a>\n\n` +
+        `⚡ <b>Action Required:</b>\n` +
+        `1. Inspect the issue link on GitHub.\n` +
+        `2. Open <b>Antigravity</b> on your PC with the repository and issue URL to claim the bounty and construct the solution before competing PRs are submitted.`;
+
+      await sendTelegram(alertMsg);
     }
   } catch (err) {
     console.error('[Opire] Scan error:', err.message);
   }
 }
 
+async function scanN8nCommunityJobs(metrics, seenN8nTopics) {
+  console.log('[CloudScout] Scanning n8n Community Jobs category...');
+  try {
+    const res = await fetch('https://community.n8n.io/c/jobs/13.json', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    });
+    if (!res.ok) {
+      console.log('[n8n Community] API returned status ' + res.status);
+      return;
+    }
+
+    const data = await res.json();
+    if (!data || !data.topic_list || !Array.isArray(data.topic_list.topics)) {
+      console.log('[n8n Community] Unexpected response format');
+      return;
+    }
+
+    const topics = data.topic_list.topics;
+    metrics.issues_scanned += topics.length;
+    console.log('[n8n Community] Active topics inspected: ' + topics.length);
+
+    const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+
+    for (const topic of topics) {
+      // Skip category guidelines and closed topics
+      if (topic.id === 941 || topic.pinned) continue;
+      if (topic.closed) continue;
+
+      const createdTime = new Date(topic.created_at).getTime();
+      if (createdTime < fourteenDaysAgo) continue;
+
+      // Deduplication check
+      if (seenN8nTopics.has(topic.id)) {
+        continue;
+      }
+
+      seenN8nTopics.add(topic.id);
+      metrics.bounties_found++;
+      metrics.last_bounty = `n8n Job: ${topic.title.substring(0, 35)}...`;
+      console.log('[n8n Community] Qualified job found: [ID ' + topic.id + '] ' + topic.title);
+
+      const topicUrl = `https://community.n8n.io/t/${topic.slug || topic.id}/${topic.id}`;
+      const repliesCount = Math.max(0, (topic.posts_count || 1) - 1);
+
+      const alertMsg = 
+        `⚡ <b>NEW N8N COMMUNITY AUTOMATION OPPORTUNITY</b>\n\n` +
+        `<b>Title:</b> ${escapeHtml(topic.title)}\n` +
+        `<b>Platform:</b> Official n8n Community (Jobs)\n` +
+        `<b>Date:</b> ${topic.created_at.split('T')[0]}\n` +
+        `<b>Engagement:</b> ${repliesCount} replies | ${topic.views || 0} views\n\n` +
+        `🔗 <a href="${topicUrl}">View Job Posting on n8n Community</a>\n\n` +
+        `⚡ <b>Action Required:</b>\n` +
+        `1. Open the thread link above to review the client's automation requirements.\n` +
+        `2. Open <b>Antigravity</b> on your PC with the topic URL to review the technical requirements, design the n8n workflow architecture, and prepare your application reply.`;
+
+      await sendTelegram(alertMsg);
+    }
+  } catch (err) {
+    console.error('[n8n Community] Scan error:', err.message);
+  }
+}
+
 async function run() {
   console.log('[CloudScout] Starting 24/7 scan cycle at ' + new Date().toISOString());
   const isManual = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
-  
+
   if (isManual) {
     await sendTelegram('🛰️ <b>Cloud Scout Heartbeat:</b> 24/7 GitHub Actions cron executed in cloud!');
     console.log('Dispatched manual heartbeat alert to Telegram.');
@@ -269,14 +354,19 @@ async function run() {
     last_bounty: null
   };
 
+  const seenN8nTopics = new Set();
+
   // 1. Scan Algora escrow bounties
   await scanAlgoraBounties(headers, metrics);
 
   // 2. Scan Opire public rewards API
   await scanOpireBounties(headers, metrics);
 
-  // 3. Update live telemetry in repository
-  await updateLiveTelemetry(metrics);
+  // 3. Scan n8n Community Jobs
+  await scanN8nCommunityJobs(metrics, seenN8nTopics);
+
+  // 4. Update live telemetry in repository
+  await updateLiveTelemetry(metrics, Array.from(seenN8nTopics));
   console.log('[CloudScout] Scan cycle completed successfully.');
 }
 
