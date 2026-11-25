@@ -1,12 +1,42 @@
 {
-  "schema_version": "2.0.0",
-  "last_updated": "2026-11-25T20:38:03.946Z",
+  "schema_version": "2.1.0",
+  "last_updated": "2026-11-25T21:58:00.000Z",
   "agency": {
     "name": "MRomih Automations",
     "founder": "Mohamed Romih",
     "location": "Alexandria, Egypt",
     "operating_model": "$0 Upfront Budget, Cloud-Native Standby"
   },
+  "executive_charter": {
+    "company_mission": "Build a high-margin, $0-upfront-cost AI & n8n workflow automation agency (MRomih Automations, Founder Mohamed Romih, operating globally from Egypt) specializing in resilient lead-triage engines, webhook-to-CRM pipelines, AI agents, and scraping systems.",
+    "north_star_goal": "Reach consistent $3,000+/month recurring and project revenue at $45-$65/hr (or $500-$1,500+ fixed builds) while protecting 100% platform compliance.",
+    "core_duties": {
+      "1_pipeline_velocity": "Hunt, qualify, and follow up on high-ROI opportunities across n8n Community, Opire, Algora, HN, Contra, Fiverr, and LinkedIn.",
+      "2_asset_compounding": "Turn recurring market pain points into public GitHub templates (MRomih-Automations/n8n-ai-lead-triage-kit) and reusable client blueprints.",
+      "3_bottleneck_diagnosis": "Identify where revenue is stalling across the conversion funnel and prescribe the highest-leverage tactical or operational action.",
+      "4_risk_and_margin_protection": "Enforce $0 upfront ad spend, block unpaid/US-W2 traps, preserve Fiverr search indexing (never edit gig titles/tags unnecessarily), and keep all browser logins air-gapped for Antigravity on PC."
+    }
+  },
+  "company_history_milestones": [
+    "Launched 4 Fiverr gigs ($35-$750: n8n AI Lead Triage, 24h n8n/Make Debug, Python Web Scrapers, Custom MCP Server Integrations) at 100% New Seller slot capacity.",
+    "Built Contra profile ($65/hr) with 2 live multimedia case studies (n8n AI Lead Triage 42s video walkthrough + Python Stealth Scraping pipeline) and applied to Ghost Note ($130-$140/hr).",
+    "Published open-source lead magnet repo MRomih-Automations/n8n-ai-lead-triage-kit with sanitized workflow JSON, architecture diagrams, and live execution proof.",
+    "Deployed 5-minute AI Gmail Spectator Sentinel (gmail_spectator.gs on Google Apps Script) with Gemini triage and ready-to-paste Antigravity prompts for critical orders/KYC.",
+    "Deployed 30-minute Opportunity Scout (scout.js on GitHub Actions) scanning n8n Community, Opire, Algora, and HN Algolia hiring threads.",
+    "Pitched François Hurstel (Steek Lab #330154, $20-$55/hr) via personalized 195-character LinkedIn connection note at $45/hr with 48h follow-up staged.",
+    "Submitted $650 fixed / $45/hr Airtable & Gumroad workflow proposal to kkrova (#329131, $1,000 budget) via client Airtable form with 72h follow-up staged.",
+    "Audited and filtered out US-only W-2 / unpaid traps (#329465 Solari US residency mandate, #329316 unpaid commission-only post)."
+  ],
+  "telegram_last_update_id": 0,
+  "conversion_funnel": {
+    "proposals_sent": 2,
+    "replies_received": 0,
+    "calls_booked": 0,
+    "deals_won": 0,
+    "total_revenue_usd": 0,
+    "winning_angles": []
+  },
+  "staged_linkedin_posts": [],
   "storefronts": {
     "fiverr": {
       "username": "mromih7",
