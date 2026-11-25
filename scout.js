@@ -141,6 +141,12 @@ async function run() {
       const repo = match[1];
       const issueNum = match[2];
 
+      // Filter out non-USD crypto tokens and explicitly blocked repos
+      if (/rustchain|scottcjn/i.test(repo) || /\b(RTC|token|tokens|airdrop|social mining)\b/i.test(item.title)) {
+        console.log('Skipping blocked non-USD token repo: ' + repo);
+        continue;
+      }
+
       const cRes = await fetch('https://api.github.com/repos/' + repo + '/issues/' + issueNum + '/comments', { headers });
       if (!cRes.ok) continue;
       const comments = await cRes.json();
