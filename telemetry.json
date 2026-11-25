@@ -1,17 +1,17 @@
 {
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-25T07:08:38.353Z",
-  "heartbeat_unix": 1795590518360,
+  "last_run_timestamp": "2026-11-25T20:40:12.329Z",
+  "heartbeat_unix": 1795639212329,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
-  "issues_scanned": 10,
-  "qualified_bounties_found": 1,
-  "last_bounty_title": "Scottcjn/Rustchain #2239 ($100)",
-  "last_ceo_brain_timestamp": "2026-11-25T20:11:58.557Z",
-  "last_push_title": "Autonomous Standby",
-  "n8n_topics_scanned": 15,
-  "opire_rewards_scanned": 3,
-  "human_escalation_active": false,
-  "templates_in_lead_magnet": 3,
-  "active_governance_schedules": 4
+  "issues_scanned": 75,
+  "qualified_bounties_found": 5,
+  "last_bounty_title": "HN Lead: brudgers (web+scraping+automation)",
+  "hn_scanned_hits": 40,
+  "seen_n8n_topics": [
+    330154,
+    329465,
+    329316,
+    329131
+  ]
 }
