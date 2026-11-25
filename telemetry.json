@@ -1,7 +1,7 @@
 {
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-24T20:45:02.195Z",
-  "heartbeat_unix": 1795553102204,
+  "last_run_timestamp": "2026-11-25T07:08:38.353Z",
+  "heartbeat_unix": 1795590518360,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
   "issues_scanned": 10,
