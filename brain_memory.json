@@ -121,6 +121,12 @@
       "interval_days": 7,
       "last_checked": "2026-11-25T20:38:03.946Z",
       "description": "Build and commit a new sanitized n8n workflow template to MRomih-Automations/n8n-ai-lead-triage-kit based on real market demand."
+    },
+    "knowledge_distillation": {
+      "name": "Weekly Commercial & Technical Knowledge Distillation",
+      "interval_days": 7,
+      "last_checked": "2026-11-25T22:16:00.000Z",
+      "description": "Synthesize newly observed buyer pain points, trending tool stacks, and winning proposal hooks from market_research_notes and conversion_funnel into playbook.json after Principal QA Critic review."
     }
   },
   "active_deal_pipeline": [

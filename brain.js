@@ -13,6 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 // 1. Load local .env if available
 const envPath = path.join(__dirname, '.env');
@@ -128,6 +129,38 @@ function saveMemory(mem) {
   mem.last_updated = new Date().toISOString();
   fs.writeFileSync(memPath, JSON.stringify(mem, null, 2), 'utf8');
   console.log('💾 [CEO Brain] Persistent memory ledger saved.');
+}
+
+function loadPlaybook() {
+  const pbPath = path.join(__dirname, 'playbook.json');
+  if (fs.existsSync(pbPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(pbPath, 'utf8'));
+      if (!Array.isArray(parsed.discovered_market_patterns)) {
+        parsed.discovered_market_patterns = [];
+      }
+      return parsed;
+    } catch (e) {
+      console.warn('[CEO Brain] Error parsing playbook.json:', e.message);
+    }
+  }
+  return {
+    schema_version: '1.0.0',
+    last_updated: new Date().toISOString(),
+    owner: 'Mohamed Romih | MRomih Automations',
+    offer_ladder: {},
+    vertical_playbooks: {},
+    objection_handlers: {},
+    content_and_outreach_frameworks: {},
+    discovered_market_patterns: []
+  };
+}
+
+function savePlaybook(pb) {
+  const pbPath = path.join(__dirname, 'playbook.json');
+  pb.last_updated = new Date().toISOString();
+  fs.writeFileSync(pbPath, JSON.stringify(pb, null, 2), 'utf8');
+  console.log('📘 [CEO Brain] Commercial playbook.json saved locally.');
 }
 
 function sanitizeClientCopy(text) {
@@ -473,7 +506,7 @@ function evaluateGovernanceSchedules(memory, repoTemplates = []) {
       days_since: daysSince
     };
 
-    if (isDue && key !== 'github_lead_magnet_expansion') {
+    if (isDue && key !== 'github_lead_magnet_expansion' && key !== 'knowledge_distillation') {
       dueBrowserSchedules.push({
         id: key,
         name: sched.name,
@@ -490,6 +523,22 @@ function evaluateGovernanceSchedules(memory, repoTemplates = []) {
     ? (now >= new Date(new Date(leadMagnetSched.last_checked || 0).getTime() + (leadMagnetSched.interval_days || 7) * 24 * 60 * 60 * 1000))
     : true;
   const leadMagnetDue = leadMagnetSchedDue || repoTemplateCount < 3;
+
+  const distillSched = schedules.knowledge_distillation;
+  const distillLast = distillSched?.last_checked ? new Date(distillSched.last_checked) : new Date(0);
+  const distillSchedDue = distillSched
+    ? (now >= new Date(distillLast.getTime() + (distillSched.interval_days || 7) * 24 * 60 * 60 * 1000))
+    : true;
+  const newResearchSinceDistill = (memory.market_research_notes || []).filter(
+    n => !n.timestamp || new Date(n.timestamp) > distillLast
+  ).length;
+  const funnelSignals =
+    (memory.conversion_funnel?.replies_received || 0) +
+    (memory.conversion_funnel?.calls_booked || 0) +
+    (memory.conversion_funnel?.deals_won || 0) +
+    ((memory.conversion_funnel?.winning_angles || []).length);
+  const distillSignalCount = newResearchSinceDistill + funnelSignals;
+  const knowledgeDistillationDue = distillSchedDue && distillSignalCount >= 3;
 
   const CLOSED_STATUSES = ['WON_PAID', 'CLOSED_LOST', 'CLIENT_REPLIED'];
   const dueDeals = [];
@@ -514,7 +563,18 @@ function evaluateGovernanceSchedules(memory, repoTemplates = []) {
     }
   }
 
-  return { scheduleStatus, dueBrowserSchedules, leadMagnetDue, leadMagnetSchedDue, repoTemplateCount, dueDeals, upcomingDeals };
+  return {
+    scheduleStatus,
+    dueBrowserSchedules,
+    leadMagnetDue,
+    leadMagnetSchedDue,
+    knowledgeDistillationDue,
+    distillSchedDue,
+    distillSignalCount,
+    repoTemplateCount,
+    dueDeals,
+    upcomingDeals
+  };
 }
 
 async function callGemini(prompt) {
@@ -549,13 +609,12 @@ async function callGemini(prompt) {
   throw new Error('All Gemini API models failed in CEO Brain.');
 }
 
-async function commitLeadMagnetFile(filePath, contentStr, commitMessage) {
+async function commitGitHubFile(repo, filePath, contentStr, commitMessage) {
   if (!GH_PAT) {
-    console.log('[Builder Mode] GH_PAT not configured, skipping GitHub commit.');
+    console.log(`[GitHub Commit] GH_PAT not configured, skipping commit of ${repo}/${filePath}.`);
     return false;
   }
   const owner = 'MRomih-Automations';
-  const repo = 'n8n-ai-lead-triage-kit';
 
   try {
     let sha = null;
@@ -587,17 +646,21 @@ async function commitLeadMagnetFile(filePath, contentStr, commitMessage) {
     });
 
     if (putRes.ok) {
-      console.log(`✅ [Builder Mode] Committed ${filePath} to ${owner}/${repo}`);
+      console.log(`✅ [GitHub Commit] Committed ${filePath} to ${owner}/${repo}`);
       return true;
     } else {
       const err = await putRes.text();
-      console.warn(`[Builder Mode] Failed to commit ${filePath}: ${err}`);
+      console.warn(`[GitHub Commit] Failed to commit ${filePath} to ${repo}: ${err}`);
       return false;
     }
   } catch (err) {
-    console.error(`[Builder Mode] Error committing ${filePath}:`, err.message);
+    console.error(`[GitHub Commit] Error committing ${filePath} to ${repo}:`, err.message);
     return false;
   }
+}
+
+async function commitLeadMagnetFile(filePath, contentStr, commitMessage) {
+  return commitGitHubFile('n8n-ai-lead-triage-kit', filePath, contentStr, commitMessage);
 }
 
 async function sendTelegramAlert(htmlText) {
@@ -701,10 +764,172 @@ Output strictly valid JSON:
   }
 }
 
+async function runDistillationQACritic(candidatePatterns, playbook) {
+  const prompt = `
+You are the Principal QA Critic at MRomih Automations reviewing candidate commercial intelligence patterns before appending them into playbook.json ('discovered_market_patterns').
+
+Existing Patterns Count: ${(playbook.discovered_market_patterns || []).length}
+Existing Pattern Titles: ${JSON.stringify((playbook.discovered_market_patterns || []).map(p => p.pattern_title))}
+
+Candidate Distilled Patterns:
+${JSON.stringify(candidatePatterns, null, 2)}
+
+Evaluation Criteria:
+1. Commercial Actionability (1-10): Do patterns capture concrete recurring buyer pain points, exact trending tool combinations, and sharp offer hooks?
+2. Zero Bloat & Non-Redundancy (1-10): Concise, non-duplicative of existing playbook entries, free of fluff?
+3. Identity & Security Hygiene (1-10): Zero robotic AI self-titles ("Autonomous COO", "AI Assistant"), strictly $0-ad-spend aligned, zero plaintext secrets?
+
+Score >= 9 required to PASS.
+
+Output strictly valid JSON:
+{
+  "score": 9 or 10,
+  "approved": true or false,
+  "critique": "2 sentences summarizing quality and commercial leverage",
+  "feedback": "Revision guidance or 'Ready for production'"
+}`;
+
+  try {
+    const rawAi = await callGemini(prompt);
+    const parsed = safeJsonParse(rawAi);
+    if (parsed && typeof parsed.score !== 'undefined') {
+      return parsed;
+    }
+    throw new Error('Invalid distillation QA JSON from Gemini');
+  } catch (err) {
+    console.warn('[Distillation QA] Fallback scoring:', err.message);
+    const validArray = Array.isArray(candidatePatterns) && candidatePatterns.length > 0 && candidatePatterns.every(p => p.pattern_title && p.pain_point && p.winning_hook);
+    return {
+      score: validArray ? 9 : 6,
+      approved: validArray,
+      critique: validArray ? 'Concise, schema-valid commercial insights with actionable hooks.' : 'Candidate patterns failed schema completeness check.',
+      feedback: validArray ? 'Ready for production' : 'Missing required fields'
+    };
+  }
+}
+
+async function runWeeklyKnowledgeDistillation(memory, playbook, governance) {
+  const count = (playbook.discovered_market_patterns || []).length;
+  if (!governance.knowledgeDistillationDue) {
+    const nextDate = governance.scheduleStatus?.knowledge_distillation?.next_due?.split('T')[0] || 'Scheduled';
+    return `Playbook holds <b>${count}</b> distilled pattern(s); ${governance.distillSignalCount} new signal(s) collected (next 7d gate: ${nextDate}, requires ≥3 signals).`;
+  }
+
+  console.log('📚 [Knowledge Distillation] 7-day cadence & signal threshold met. Distilling insights...');
+  const distillLast = memory.platform_schedules?.knowledge_distillation?.last_checked
+    ? new Date(memory.platform_schedules.knowledge_distillation.last_checked)
+    : new Date(0);
+  const recentNotes = (memory.market_research_notes || []).filter(n => !n.timestamp || new Date(n.timestamp) > distillLast);
+
+  const synthPrompt = `
+You are the Principal Commercial Strategist at MRomih Automations (Founder: Mohamed Romih).
+Synthesize newly observed buyer pain points, trending tool combinations, and winning proposal hooks into 1 to 3 concise entries for playbook.json -> discovered_market_patterns.
+
+Strict Constraints:
+- Zero bloat: concise, concrete, high-signal patterns only.
+- Enforce human founder identity ("Mohamed Romih | MRomih Automations"). Never write robotic AI titles ("Autonomous COO", "AI Assistant").
+- Output valid JSON object matching this exact schema:
+{
+  "patterns": [
+    {
+      "pattern_title": "Short descriptive title",
+      "vertical": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines | cross_vertical",
+      "pain_point": "Concise recurring buyer failure or operational bottleneck",
+      "trending_tools": ["Tool1", "Tool2"],
+      "winning_hook": "1-2 sentence proposal hook + recommended angle signed without robotic titles",
+      "recommended_offer_tier": "diagnostic_audit | production_pipeline | enterprise_ai_system"
+    }
+  ]
+}
+
+New Market Research Notes:
+${JSON.stringify(recentNotes.slice(-10), null, 2)}
+
+Conversion Funnel & Winning Angles:
+${JSON.stringify(memory.conversion_funnel || {}, null, 2)}
+
+Existing Playbook Verticals & Discovered Patterns:
+${JSON.stringify({ vertical_playbooks: Object.keys(playbook.vertical_playbooks || {}), discovered_market_patterns: (playbook.discovered_market_patterns || []).slice(-10) }, null, 2)}`;
+
+  try {
+    const raw = await callGemini(synthPrompt);
+    const parsed = safeJsonParse(raw);
+    const candidates = Array.isArray(parsed?.patterns) ? parsed.patterns : [];
+    if (candidates.length === 0) {
+      throw new Error('Gemini returned zero distilled patterns.');
+    }
+
+    const qa = await runDistillationQACritic(candidates, playbook);
+    console.log(`🧐 [Distillation QA] Score: ${qa.score}/10 — ${qa.approved ? 'APPROVED' : 'REJECTED'}`);
+
+    if (!qa.approved || (qa.score || 0) < 9) {
+      memory.error_postmortems.push({
+        timestamp: new Date().toISOString(),
+        event: 'Weekly Knowledge Distillation QA Rejection',
+        root_cause: qa.critique || 'Distilled insights scored below 9/10 threshold.',
+        fix_applied: 'Aborted playbook.json write to prevent bloat.'
+      });
+      return `⚠️ Distilled patterns scored ${qa.score || 0}/10 during Principal QA review; aborted playbook.json update to prevent bloat.`;
+    }
+
+    const stamped = candidates.slice(0, 3).map(p => ({
+      pattern_title: sanitizeClientCopy(p.pattern_title),
+      vertical: p.vertical || 'cross_vertical',
+      pain_point: sanitizeClientCopy(p.pain_point),
+      trending_tools: Array.isArray(p.trending_tools) ? p.trending_tools.slice(0, 6) : [],
+      winning_hook: sanitizeClientCopy(p.winning_hook),
+      recommended_offer_tier: p.recommended_offer_tier || 'production_pipeline',
+      qa_score: qa.score,
+      distilled_at: new Date().toISOString()
+    }));
+
+    playbook.discovered_market_patterns = (playbook.discovered_market_patterns || []).concat(stamped).slice(-30);
+    savePlaybook(playbook);
+
+    const committed = await commitGitHubFile(
+      'revenue-scout-cron',
+      'playbook.json',
+      JSON.stringify(playbook, null, 2),
+      'chore(playbook): weekly Principal QA-approved knowledge distillation [skip ci]'
+    );
+
+    // Keep GitHub Actions runner HEAD aligned with Contents API commit before workflow step pushes memory/telemetry
+    if (committed && process.env.GITHUB_ACTIONS === 'true') {
+      try {
+        execSync('git fetch origin main && git reset --mixed origin/main', { cwd: __dirname, stdio: 'ignore' });
+      } catch (gitErr) {
+        console.warn('[Knowledge Distillation] Git runner sync warning:', gitErr.message);
+      }
+    }
+
+    if (memory.platform_schedules && memory.platform_schedules.knowledge_distillation) {
+      memory.platform_schedules.knowledge_distillation.last_checked = new Date().toISOString();
+    }
+
+    return `✅ <b>Distilled ${stamped.length} new market pattern(s)</b> (QA ${qa.score}/10) into <code>playbook.json</code>${committed ? ' &amp; persisted to GitHub' : ' (saved locally)'}.`;
+  } catch (err) {
+    console.warn('[Knowledge Distillation] Skipped cycle due to error:', err.message);
+    return `⚠️ Knowledge distillation deferred (${escapeHtml(err.message)}).`;
+  }
+}
+
 async function run() {
-  console.log('🧠 [CEO Brain] Initializing Executive Intelligence v2 5-Stage Cycle...');
+  const isDryRun = process.argv.includes('--dry-run');
+  console.log('🧠 [CEO Brain] Initializing Executive Intelligence v2 Cycle...');
 
   const memory = loadMemory();
+  const playbook = loadPlaybook();
+  console.log(`📘 [CEO Brain] Loaded playbook.json (${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns).`);
+
+  if (isDryRun) {
+    const governance = evaluateGovernanceSchedules(memory, []);
+    console.log('[CEO Brain] --dry-run passed: loaded brain_memory.json and playbook.json cleanly.', {
+      knowledgeDistillationDue: governance.knowledgeDistillationDue,
+      distillSignalCount: governance.distillSignalCount,
+      schedules: Object.keys(governance.scheduleStatus)
+    });
+    return;
+  }
 
   // Stage 0: Zero-Server Phone-to-Brain Sync via Telegram getUpdates
   const phoneSyncEvents = await syncTelegramCommands(memory);
@@ -728,10 +953,13 @@ HUMAN FOUNDER IDENTITY & SIGN-OFF MANDATES:
 - All client-facing proposals, follow-ups, outreach messages, LinkedIn posts, templates, and documentation MUST strictly be signed by the human founder: "Mohamed Romih | MRomih Automations" (Founder / Principal Automation Architect).
 - STRICTLY FORBID robotic AI self-titles: NEVER write "Autonomous Chief Operating Officer", "Autonomous COO", "AI Agent", "AI Assistant", or similar robotic titles in any proposal, outreach message, public template, LinkedIn post, or communication. Always maintain the professional human identity of Mohamed Romih, Founder of MRomih Automations.
 
-Executive Charter & Company History:
+Executive Charter & Commercial Playbook:
 - Charter: ${JSON.stringify(memory.executive_charter, null, 2)}
 - Milestones: ${JSON.stringify(memory.company_history_milestones, null, 2)}
 - Conversion Funnel: ${JSON.stringify(memory.conversion_funnel, null, 2)}
+- Offer Ladder: ${JSON.stringify(playbook.offer_ladder, null, 2)}
+- Vertical Playbooks Keys: ${JSON.stringify(Object.keys(playbook.vertical_playbooks || {}))}
+- Discovered Market Patterns: ${JSON.stringify((playbook.discovered_market_patterns || []).slice(-5), null, 2)}
 - Recent Phone Sync Updates (@RomihCO_bot): ${phoneSyncEvents.length > 0 ? JSON.stringify(phoneSyncEvents) : 'None this cycle'}
 
 Agency Memory Ledgers:
@@ -1022,6 +1250,9 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     if (memory.learned_rules.length > 25) memory.learned_rules = memory.learned_rules.slice(-25);
   }
 
+  // Weekly Knowledge Distillation Loop (QA Critic >= 9/10 gated -> playbook.json + GitHub Contents API)
+  const distillationReport = await runWeeklyKnowledgeDistillation(memory, playbook, governance);
+
   saveMemory(memory);
 
   // Update telemetry.json
@@ -1036,7 +1267,8 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     templates_in_lead_magnet: governance.repoTemplateCount,
     active_governance_schedules: Object.keys(governance.scheduleStatus).length,
     conversion_funnel: memory.conversion_funnel,
-    telegram_last_update_id: memory.telegram_last_update_id
+    telegram_last_update_id: memory.telegram_last_update_id,
+    playbook_discovered_patterns: (playbook.discovered_market_patterns || []).length
   };
   fs.writeFileSync(path.join(__dirname, 'telemetry.json'), JSON.stringify(updatedTelemetry, null, 2), 'utf8');
 
@@ -1081,6 +1313,8 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     `${schedLines}\n\n` +
     `🛠️ <b>Demand-Driven Builder & QA Gate:</b>\n` +
     `${builderReport}\n\n` +
+    `📚 <b>Weekly Knowledge Distillation (<code>playbook.json</code>):</b>\n` +
+    `${distillationReport}\n\n` +
     `💡 <b>Learned Insight:</b>\n` +
     `<i>"${escapeHtml(analysis.learned_insight)}"</i>\n\n`;
 

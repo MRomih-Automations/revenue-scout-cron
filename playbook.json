@@ -1,0 +1,169 @@
+{
+  "schema_version": "1.0.0",
+  "last_updated": "2026-11-25T22:16:00.000Z",
+  "owner": "Mohamed Romih | MRomih Automations",
+  "offer_ladder": {
+    "diagnostic_audit": {
+      "name": "Diagnostic Architecture Audit",
+      "price": "$150 fixed (48-hour turnaround)",
+      "description": "$150 fixed (48-hour turnaround) — Full webhook, idempotency, and error-handling audit with architecture blueprint; 100% credited toward full build (best hook for buyers burned by unreliable freelancers).",
+      "trigger_signals": [
+        "broken workflow",
+        "unreliable freelancer",
+        "previous developer failed",
+        "silent failures",
+        "missing webhooks",
+        "duplicate records"
+      ]
+    },
+    "production_pipeline": {
+      "name": "Turnkey Production Pipeline",
+      "price": "$500–$850 fixed",
+      "description": "$500–$850 fixed — End-to-end single-system integration (e.g., Gumroad/Stripe to Airtable/HubSpot) with HMAC SHA-256 verification, deduplication, and dead-letter error sub-workflow.",
+      "trigger_signals": [
+        "connect webhook to crm",
+        "airtable sync",
+        "gumroad integration",
+        "stripe webhook",
+        "lead capture workflow"
+      ]
+    },
+    "enterprise_ai_system": {
+      "name": "Enterprise AI & Multi-System Architecture",
+      "price": "$1,200–$2,500+ fixed or $45–$65/hr retainer",
+      "description": "$1,200–$2,500+ fixed or $45–$65/hr retainer — Multi-agent lead triage, VoIP/SMS scheduling, legacy API normalization, and QuickBooks/CRM sync.",
+      "trigger_signals": [
+        "multi-agent",
+        "ai automation engineer",
+        "ongoing retainer",
+        "telephony",
+        "quickbooks",
+        "long-term workflow architecture"
+      ]
+    }
+  },
+  "vertical_playbooks": {
+    "ecommerce_and_creators": {
+      "name": "E-Commerce & Digital Creators",
+      "pipeline": "Gumroad / Stripe / Shopify -> Airtable / CRM / Email",
+      "tech_stack": [
+        "n8n",
+        "Gumroad API",
+        "Stripe Webhooks",
+        "Shopify",
+        "Airtable",
+        "HubSpot",
+        "Resend / SMTP"
+      ],
+      "core_failure_points": [
+        "Unsigned webhook endpoints vulnerable to forged requests",
+        "Webhook retry storms creating duplicate customer and revenue rows in Airtable",
+        "Silent HTTP 429/500 drops causing missed buyer onboarding emails",
+        "Raw cent-vs-dollar currency mismatches and missing refund state updates"
+      ],
+      "architecture_solution": "HMAC SHA-256 timing-safe webhook security gate + transaction-ID idempotency lookup before Airtable upsert + Enterprise Error Dead-Letter Handler alerting Telegram/Slack immediately.",
+      "roi_metrics": "Eliminates 100% of duplicate sales rows and silent drop-offs, replacing 6–10 hours/week of manual reconciliation (~$1,000+ monthly operational savings).",
+      "recommended_default_tier": "production_pipeline"
+    },
+    "b2b_gtm_and_lead_triage": {
+      "name": "B2B GTM & AI Lead Triage",
+      "pipeline": "Inbound Form / Webhook -> Enrichment + DNS Check -> LLM Scoring -> Slack / HubSpot Routing",
+      "tech_stack": [
+        "n8n",
+        "Webhooks",
+        "Gemini / OpenAI Strict JSON",
+        "DNS MX Check",
+        "HubSpot / Pipedrive",
+        "Slack / Telegram"
+      ],
+      "core_failure_points": [
+        "Slow lead response (>30 minutes) drastically reducing demo booking rates",
+        "Throwaway/burner email addresses polluting sales CRM pipelines",
+        "Unstructured LLM prose crashing downstream field mapping",
+        "Zero deterministic fallback when external enrichment APIs rate-limit"
+      ],
+      "architecture_solution": "Sub-2.4s autonomous triage pipeline with live DNS MX validation, structured JSON LLM scoring + deterministic rule fallback, CRM deal upsert, and instant VIP Slack/Telegram routing.",
+      "roi_metrics": "Drops speed-to-lead under 5 seconds (<2.4s median), blocks disposable domain noise before CRM writeback, and increases qualified sales follow-up speed by 3x.",
+      "recommended_default_tier": "production_pipeline"
+    },
+    "smb_healthcare_and_services": {
+      "name": "SMB Healthcare, Veterinary & Local Services",
+      "pipeline": "Dental / Vet Scheduling -> VoIP / Twilio SMS Reminders -> PII Sanitization -> QuickBooks / CRM Sync",
+      "tech_stack": [
+        "n8n",
+        "Twilio SMS / VoIP APIs",
+        "Practice Scheduling APIs",
+        "QuickBooks Online",
+        "PostgreSQL / Airtable",
+        "AI Triage Agents"
+      ],
+      "core_failure_points": [
+        "Disconnected telephony, appointment calendars, and billing software requiring double entry",
+        "Missed SMS confirmations driving costly patient/client no-shows",
+        "Unmasked PII leaking into external LLM prompts",
+        "Brittle polling scripts silently breaking invoice reconciliation in QuickBooks"
+      ],
+      "architecture_solution": "Normalized webhook ingestion + pre-LLM PII redaction layer + Twilio SMS confirmation/escalation workflows + idempotent QuickBooks sync backed by dead-letter alerting.",
+      "roi_metrics": "Reclaims 12–20 hours/week of manual front-desk coordination and reduces missed appointment revenue loss by 25–40%.",
+      "recommended_default_tier": "enterprise_ai_system"
+    },
+    "scraping_and_data_pipelines": {
+      "name": "Web Scraping & Clean ETL Data Pipelines",
+      "pipeline": "Scheduled Extraction -> Anti-Bot Resilience -> Schema Normalization -> Database / Sheet Upsert",
+      "tech_stack": [
+        "Python",
+        "Playwright",
+        "Scrapy",
+        "Pydantic",
+        "Proxy Rotation",
+        "PostgreSQL / Google Sheets / Airtable"
+      ],
+      "core_failure_points": [
+        "Cloudflare/DataDome anti-bot challenges breaking naive HTML scrapers",
+        "Dynamic client-side JavaScript rendering returning partial or null rows",
+        "Schema drift polluting target tables with malformed strings and duplicates",
+        "Unmonitored cron runs failing silently for days"
+      ],
+      "architecture_solution": "Stealth Playwright pipeline with adaptive backoff and proxy pool support + strict Pydantic validation + primary-key deduplicated database/Sheet upsert + health alerts.",
+      "roi_metrics": "Delivers 99%+ structured dataset completeness with zero duplicates, saving 15+ hours/week of manual prospect extraction and QA.",
+      "recommended_default_tier": "production_pipeline"
+    }
+  },
+  "objection_handlers": {
+    "cheaper_competitor_bids": "Completely fair to compare options. Low-budget automation builds typically wire a happy-path webhook directly to a table, which silently drops transactions or creates duplicate rows the moment an API rate-limits or retries. At MRomih Automations, every build includes HMAC SHA-256 verification, transaction-ID idempotency, and a dedicated dead-letter error sub-workflow so nothing fails silently. If you want zero-risk proof before committing to the full build, we can start with our $150 48-hour Diagnostic Audit—100% credited toward the project.\n\nBest regards,\nMohamed Romih | MRomih Automations",
+    "free_sample_request": "I don't write custom speculative client builds for free so existing clients get 100% focus, but you can inspect our live production n8n architecture, sample payloads, and execution traces right now at https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and on Contra at https://contra.com/mohamed_romih_jj5w3q2x. If you'd like an actionable diagnostic plan mapped directly to your stack first, we offer a $150 48-hour Diagnostic Audit that credits 100% toward the full build.\n\nBest regards,\nMohamed Romih | MRomih Automations",
+    "ai_reliability_concerns": "That's the right question to ask—raw LLM prompts should never control production operations unchecked. Every AI workflow I architect enforces strict JSON schema validation, ships with deterministic rule-based fallbacks if an external model stalls, and gates critical or ambiguous decisions behind human-in-the-loop notifications before mutating CRM or financial records.\n\nBest regards,\nMohamed Romih | MRomih Automations"
+  },
+  "content_and_outreach_frameworks": {
+    "architecture_teardown": {
+      "name": "Architecture Teardown",
+      "hook": "Explain the exact production failure symptom first (silent drops / duplicate rows), then show the 3-part reliability fix (HMAC Gate + Idempotency + Error Sub-Workflow).",
+      "assets": [
+        "https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit",
+        "proof_n8n_architecture.png"
+      ],
+      "cta": "Link the open-source template repo and invite DM or $150 48h Diagnostic Audit."
+    },
+    "failure_post_mortem": {
+      "name": "Failure Post-Mortem",
+      "hook": "Analyze why cheap happy-path automations break under real API retries and rate limits, and present the verified blueprint alternative.",
+      "assets": [
+        "blueprints/01_hmac_webhook_security_gate.json",
+        "blueprints/02_airtable_idempotent_upsert.json",
+        "blueprints/03_enterprise_error_dead_letter.json"
+      ],
+      "cta": "Invite founders burned by fragile Zaps/workflows to book a credited $150 Diagnostic Audit."
+    },
+    "live_demo_showcase": {
+      "name": "Live Demo Showcase",
+      "hook": "Lead with measured throughput (<2.4s webhook -> AI qualification -> MX check -> CRM writeback -> Telegram alert) paired with the 42s screen recording.",
+      "assets": [
+        "n8n_ai_triage_demo.mp4",
+        "https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit",
+        "https://contra.com/mohamed_romih_jj5w3q2x"
+      ],
+      "cta": "Offer $500-$850 turnkey build or $45-$65/hr embedded automation engineering signed by Mohamed Romih | MRomih Automations."
+    }
+  },
+  "discovered_market_patterns": []
+}

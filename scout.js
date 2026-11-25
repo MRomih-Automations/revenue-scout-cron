@@ -77,6 +77,33 @@ function loadMemory() {
   };
 }
 
+function loadPlaybook() {
+  const pbPath = path.join(__dirname, 'playbook.json');
+  if (fs.existsSync(pbPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(pbPath, 'utf8'));
+    } catch (e) {
+      console.warn('[Scout] Error reading playbook.json:', e.message);
+    }
+  }
+  return {
+    offer_ladder: {},
+    vertical_playbooks: {},
+    objection_handlers: {},
+    content_and_outreach_frameworks: {},
+    discovered_market_patterns: []
+  };
+}
+
+function formatPlaybookContext(playbook) {
+  return JSON.stringify({
+    offer_ladder: playbook.offer_ladder || {},
+    vertical_playbooks: playbook.vertical_playbooks || {},
+    objection_handlers: playbook.objection_handlers || {},
+    discovered_market_patterns: (playbook.discovered_market_patterns || []).slice(-5)
+  }, null, 2);
+}
+
 function getTrackedTopicIds(memory) {
   const tracked = new Set([330154, 329131, 329465]);
   
@@ -486,9 +513,10 @@ Output JSON:
   }
 }
 
-async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory) {
+async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook) {
   console.log('[CloudScout] Scanning n8n Community Jobs category...');
   const appliedTopicIds = getTrackedTopicIds(memory);
+  const playbookContext = formatPlaybookContext(playbook || {});
 
   try {
     const res = await fetch('https://community.n8n.io/c/jobs/13.json', {
@@ -579,12 +607,13 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory) {
       const topicUrl = `https://community.n8n.io/t/${topic.slug || topic.id}/${topic.id}`;
       const authorUsername = firstPost?.username || 'the poster';
 
-      // 2. Perform Complete Technical Requirement Study, Workflow Architecture Plan, ROI & Application in Cloud via Gemini
+      // 2. Perform Complete Technical Requirement Study, Playbook Classification, Workflow Architecture Plan, ROI & Application in Cloud via Gemini
+      const hasBrokenHistory = /broken|failed|unreliable|previous freelancer|frustrat|silent fail|duplicate/i.test(textContent);
       let study = null;
       try {
         const aiPrompt = `
-You are the Autonomous Chief Operating Officer and Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
-Perform a comprehensive technical study, architecture design, and proposal drafting for this live client request:
+You are the Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
+Perform a comprehensive technical study, Commercial Playbook matching, architecture design, and proposal drafting for this live client request:
 
 Platform: Official n8n Community (Jobs)
 Topic ID: #${topic.id}
@@ -594,9 +623,17 @@ URL: ${topicUrl}
 Full Post Text:
 ${textContent.substring(0, 2500)}
 
+Commercial & Technical Playbook (playbook.json):
+${playbookContext}
+
+Playbook Execution Mandates:
+1. Classify this lead into the closest vertical key in vertical_playbooks ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
+2. Select the highest-converting offer tier from offer_ladder ("diagnostic_audit", "production_pipeline", or "enterprise_ai_system"). CRITICAL: If the client mentions past broken automations, silent failures, or unreliable freelancers, pitch the "$150 fixed (48h) Credited Diagnostic Audit" alongside the full build tier!
+3. Weave that vertical's exact technical hooks (architecture_solution + roi_metrics) into proposed_copy.
+
 Agency Context & Operating Rules:
-- Core Capabilities: Enterprise n8n workflows, webhook reliability, error-handling sub-workflows, CRM synchronization (HubSpot, Airtable, QuickBooks, PostgreSQL), AI lead triage, Python scraping.
-- Pricing Rules: Never undersell high-budget engineering roles with $35 debug pricing. Target $45/hr (within client's $20-$55/hr range) or $500-$1,000 for fixed-scope production implementations.
+- Core Capabilities: Enterprise n8n workflows, HMAC SHA-256 verification, transaction-ID idempotency, dead-letter error sub-workflows, CRM synchronization (HubSpot, Airtable, QuickBooks, PostgreSQL), AI lead triage, Python scraping.
+- Pricing Rules: Never undersell high-budget engineering roles with $35 debug pricing. Use offer_ladder tiers ($150 credited audit, $500-$850 production pipeline, or $1,200-$2,500+ / $45-$65/hr enterprise retainer).
 - Identity & Sign-Off Mandate: All proposals, messages, and copy must strictly be signed as "Mohamed Romih | MRomih Automations" (Founder / Principal Automation Architect). Strictly forbid robotic AI self-titles (never write "Autonomous Chief Operating Officer", "Autonomous COO", "AI Assistant", etc.).
 - Public Proofs:
   * Open-Source Lead Magnet: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit
@@ -605,16 +642,20 @@ Agency Context & Operating Rules:
 
 Output strictly valid JSON:
 {
+  "matched_vertical": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines",
+  "recommended_offer_tier": "diagnostic_audit | production_pipeline | enterprise_ai_system",
   "technical_study": "3-4 sentences breaking down client requirements, integration endpoints, data schema, and security/rate-limit considerations.",
-  "workflow_architecture": "Step-by-step n8n node topology (e.g. 1. Webhook trigger -> 2. Crypto HMAC validation -> 3. Code node transform -> 4. Target API / Airtable batch sync -> 5. Sub-workflow error trigger).",
-  "calculated_roi": "Estimated project value / budget ($X USD) | Target hourly rate ($45/hr) | Estimated hours | ROI justification for client",
-  "proposed_copy": "Polished, engineering-first proposal copy ready to send directly to the client (addressing author by name, referencing case studies, availability, and next steps).",
+  "workflow_architecture": "Step-by-step n8n node topology (e.g. 1. Webhook trigger -> 2. Crypto HMAC validation -> 3. Code node transform -> 4. Target API / Airtable upsert -> 5. Sub-workflow dead-letter error trigger).",
+  "calculated_roi": "Offer tier | Estimated project value ($X USD) | Target rate ($45-$65/hr or fixed) | ROI justification anchored to vertical metrics",
+  "proposed_copy": "Polished, engineering-first proposal copy weaving vertical hooks + credited $150 Diagnostic Audit if burned by past devs, signed 'Mohamed Romih | MRomih Automations'.",
   "antigravity_prompt": "Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine... (complete step-by-step instructions for Antigravity on PC to open the exact browser URL or form, paste the pre-written proposal, update AGENT_HANDOVER.md, and commit)."
 }`;
 
         const rawAi = await callGemini(aiPrompt);
         study = safeJsonParse(rawAi);
         if (!study) {
+          const vertMatch = rawAi.match(/"matched_vertical"\s*:\s*"([^"]+)"/i);
+          const tierMatch = rawAi.match(/"recommended_offer_tier"\s*:\s*"([^"]+)"/i);
           const techMatch = rawAi.match(/"technical_study"\s*:\s*"([\s\S]*?)(?=",\s*"workflow_architecture")/i);
           const archMatch = rawAi.match(/"workflow_architecture"\s*:\s*"([\s\S]*?)(?=",\s*"calculated_roi")/i);
           const roiMatch = rawAi.match(/"calculated_roi"\s*:\s*"([\s\S]*?)(?=",\s*"proposed_copy")/i);
@@ -622,6 +663,8 @@ Output strictly valid JSON:
           const promptMatch = rawAi.match(/"antigravity_prompt"\s*:\s*"([\s\S]*?)(?="\s*\}|\s*$)/i);
           if (techMatch && copyMatch) {
             study = {
+              matched_vertical: vertMatch ? vertMatch[1] : 'b2b_gtm_and_lead_triage',
+              recommended_offer_tier: tierMatch ? tierMatch[1] : (hasBrokenHistory ? 'diagnostic_audit' : 'production_pipeline'),
               technical_study: techMatch[1].replace(/\\n/g, '\n').trim(),
               workflow_architecture: archMatch ? archMatch[1].replace(/\\n/g, '\n').trim() : '',
               calculated_roi: roiMatch ? roiMatch[1].replace(/\\n/g, '\n').trim() : '',
@@ -634,21 +677,28 @@ Output strictly valid JSON:
         }
       } catch (err) {
         console.warn('[n8n Community] AI study fallback:', err.message);
+        const fallbackTier = hasBrokenHistory ? 'diagnostic_audit + production_pipeline' : 'production_pipeline';
+        const auditPitch = hasBrokenHistory
+          ? '\n\nIf you want zero-risk proof before committing to the full build, we can kick off with a $150 48-hour Diagnostic Audit (100% credited toward the final implementation).'
+          : '';
         study = {
-          technical_study: `Client requires production n8n automation for: ${topic.title}. Focus on reliable API synchronization and error routing.`,
-          workflow_architecture: '1. Webhook Trigger -> 2. Data Validation & Transformation -> 3. Target API Integration -> 4. Error Sub-workflow Trigger.',
-          calculated_roi: 'Target Rate: $45/hr (or fixed $500-$1,000) | 10-20h estimated scope.',
-          proposed_copy: `Hi,\n\nI reviewed your project requirements for "${topic.title}". At MRomih Automations, we build production n8n workflows with enterprise resilience patterns (webhook HMAC verification, sub-workflow error alerting, and clean CRM writebacks).\n\nYou can review an open-source sample of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur portfolio and case studies:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nTarget Rate: $45/hr (available 20-30 hrs/wk).\nGlad to hop on a quick 15-minute call or kick off with a paid trial task.\n\nBest regards,\nMohamed Romih | MRomih Automations`,
+          matched_vertical: /gumroad|stripe|shopify|airtable/i.test(textContent) ? 'ecommerce_and_creators' : 'b2b_gtm_and_lead_triage',
+          recommended_offer_tier: fallbackTier,
+          technical_study: `Client requires production n8n automation for: ${topic.title}. Focus on reliable HMAC verification, idempotency, and dead-letter error routing.`,
+          workflow_architecture: '1. Webhook Trigger + HMAC Gate -> 2. Transaction ID Idempotency Lookup -> 3. Normalized Upsert -> 4. Enterprise Error Dead-Letter Sub-workflow.',
+          calculated_roi: `Offer Tier: ${fallbackTier} | $500–$850 fixed or $45/hr target | Zero duplicate rows & silent drops.`,
+          proposed_copy: `Hi,\n\nI reviewed your project requirements for "${topic.title}". At MRomih Automations, we build production n8n pipelines with HMAC SHA-256 webhook gates, transaction-ID idempotency (preventing duplicate rows), and dead-letter error alerting so nothing fails silently.${auditPitch}\n\nYou can inspect an open-source sample of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur portfolio and case studies:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nTarget Rate: $45/hr (or $500–$850 turnkey build).\nGlad to hop on a quick 15-minute call.\n\nBest regards,\nMohamed Romih | MRomih Automations`,
           antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${topicUrl} in the browser. Submit the pre-written proposal via the external application link, direct message, or LinkedIn founder outreach. Log the outreach in AGENT_HANDOVER.md and push to origin main.`
         };
       }
 
       // 3. Format and Send Telegram Opportunity Alert
-      const alertMsg = 
+      const alertMsg =
         `🟡 <b>[OPPORTUNITY — READY FOR ANTIGRAVITY]</b>\n` +
         `<b>Live n8n Community Client Opportunity</b>\n\n` +
         `📋 <b>Title:</b> ${escapeHtml(topic.title)}\n` +
         `👤 <b>Author:</b> <code>@${escapeHtml(authorUsername)}</code> | <b>Date:</b> ${topic.created_at.split('T')[0]}\n` +
+        `🎯 <b>Playbook Match:</b> <code>${escapeHtml(study.matched_vertical || 'custom')}</code> | <b>Offer Tier:</b> <code>${escapeHtml(study.recommended_offer_tier || 'production_pipeline')}</code>\n` +
         `🔗 <b>URL:</b> <a href="${topicUrl}">View Post on n8n Community</a>\n\n` +
         `🔬 <b>Technical Requirement Study:</b>\n` +
         `${escapeHtml(study.technical_study)}\n\n` +
@@ -660,7 +710,7 @@ Output strictly valid JSON:
         `<blockquote>${escapeHtml(study.proposed_copy)}</blockquote>\n\n` +
         `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
         `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
-        `🏛️ <i>MRomih Automations Autonomous Cloud Scout</i>`;
+        `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>`;
 
       await sendTelegram(alertMsg);
       console.log(`[n8n Community] Dispatched pre-analyzed Antigravity opportunity for #${topic.id}`);
@@ -670,10 +720,11 @@ Output strictly valid JSON:
   }
 }
 
-async function scanHackerNews(metrics, seenHnIds, memory) {
+async function scanHackerNews(metrics, seenHnIds, memory, playbook) {
   console.log('[CloudScout] Scanning Hacker News Algolia API for automation & scraping opportunities...');
   const queries = ['n8n', 'web+scraping+automation'];
   metrics.hn_scanned_hits = 0;
+  const playbookContext = formatPlaybookContext(playbook || {});
 
   for (const q of queries) {
     try {
@@ -716,43 +767,50 @@ async function scanHackerNews(metrics, seenHnIds, memory) {
         let study = null;
         try {
           const aiPrompt = `
-You are the Technical Lead at MRomih Automations.
-Analyze this Hacker News automation/scraping opportunity:
+You are the Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
+Analyze this Hacker News automation/scraping opportunity using our Commercial & Technical Playbook:
 Author: ${hit.author}
 Query: ${q}
 URL: ${hnUrl}
 Snippet:
 ${(hit.comment_text || hit.story_text || hit.title || '').substring(0, 1500)}
 
-Perform a deep technical study:
-1. Client requirement diagnosis.
-2. Architecture & execution plan (n8n workflow or Python stealth scraper).
-3. ROI Assessment: Estimated budget & pricing.
-4. Prepare an Antigravity prompt starting with 'Run \`git pull\` first...'.
+Commercial Playbook (playbook.json):
+${playbookContext}
 
-Output JSON:
+Mandates:
+1. Classify into the closest vertical key in vertical_playbooks ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
+2. Select the highest-converting offer_ladder tier (pitching the $150 48h Credited Diagnostic Audit alongside full builds if reliability issues or broken pipelines are mentioned).
+3. Draft the technical study, architecture plan (weaving vertical hooks), ROI assessment, and Antigravity execution prompt signed "Mohamed Romih | MRomih Automations". Strictly forbid robotic AI self-titles.
+
+Output strictly valid JSON:
 {
+  "matched_vertical": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines",
+  "recommended_offer_tier": "diagnostic_audit | production_pipeline | enterprise_ai_system",
   "diagnosis": "2-3 sentences technical summary",
-  "architecture_plan": "Bulleted technical plan",
-  "roi_calc": "Estimated value | Rate recommendation",
-  "antigravity_prompt": "Run \`git pull\` first..."
+  "architecture_plan": "Bulleted technical plan weaving vertical reliability hooks",
+  "roi_calc": "Offer tier | Estimated value | Rate recommendation",
+  "antigravity_prompt": "Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine..."
 }`;
           const rawAi = await callGemini(aiPrompt);
-          const clean = rawAi.replace(/```json/gi, '').replace(/```/g, '').trim();
-          study = JSON.parse(clean);
+          study = safeJsonParse(rawAi);
+          if (!study) throw new Error('Invalid JSON response from Gemini');
         } catch (e) {
           study = {
-            diagnosis: `HN discussion mentioning automation/scraping need by ${hit.author}.`,
-            architecture_plan: 'Review thread context, draft technical architectural answer referencing MRomih Automations GitHub/Contra.',
-            roi_calc: '$45-$65/hr consulting or project implementation.',
-            antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then review HN comment at ${hnUrl} and respond with technical architectural advice.`
+            matched_vertical: /scrap|playwright|crawl|extract/i.test(text) ? 'scraping_and_data_pipelines' : 'b2b_gtm_and_lead_triage',
+            recommended_offer_tier: 'production_pipeline',
+            diagnosis: `HN thread mentioning automation/scraping need by ${hit.author}.`,
+            architecture_plan: 'Review thread context, apply vertical reliability architecture (HMAC gate, idempotency, dead-letter alerts), and share MRomih Automations GitHub/Contra proofs.',
+            roi_calc: '$500–$850 turnkey build or $45–$65/hr consulting.',
+            antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then review HN thread at ${hnUrl} and respond as Mohamed Romih | MRomih Automations with tailored architectural guidance.`
           };
         }
 
-        const alertMsg = 
+        const alertMsg =
           `🟡 <b>[OPPORTUNITY — READY FOR ANTIGRAVITY]</b>\n` +
           `<b>Hacker News Automation / Scraping Lead</b>\n\n` +
           `👤 <b>Author:</b> <code>${escapeHtml(hit.author)}</code> | <b>Query:</b> <code>${escapeHtml(q)}</code>\n` +
+          `🎯 <b>Playbook Match:</b> <code>${escapeHtml(study.matched_vertical || 'custom')}</code> | <b>Offer Tier:</b> <code>${escapeHtml(study.recommended_offer_tier || 'production_pipeline')}</code>\n` +
           `🔗 <b>URL:</b> <a href="${hnUrl}">View on Hacker News</a>\n\n` +
           `🔬 <b>Technical Diagnosis:</b>\n` +
           `${escapeHtml(study.diagnosis)}\n\n` +
@@ -761,7 +819,7 @@ Output JSON:
           `📊 <b>Calculated ROI:</b> ${escapeHtml(study.roi_calc)}\n\n` +
           `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
           `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
-          `🏛️ <i>MRomih Automations Autonomous Cloud Scout</i>`;
+          `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>`;
 
         await sendTelegram(alertMsg);
       }
@@ -774,7 +832,16 @@ Output JSON:
 async function run() {
   console.log('[CloudScout] Starting autonomous 24/7 technical scout cycle at ' + new Date().toISOString());
   const isManual = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
+  const isDryRun = process.argv.includes('--dry-run');
   const memory = loadMemory();
+  const playbook = loadPlaybook();
+
+  console.log(`[CloudScout] Loaded playbook.json: ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns.`);
+
+  if (isDryRun) {
+    console.log('[CloudScout] --dry-run passed: verified brain_memory.json and playbook.json load cleanly.');
+    return;
+  }
 
   if (isManual) {
     await sendTelegram('🛰️ <b>Cloud Scout Heartbeat:</b> 24/7 GitHub Actions technical scout active in cloud!');
@@ -806,10 +873,10 @@ async function run() {
   await scanOpireBounties(headers, metrics, memory);
 
   // 3. Scan n8n Community Jobs
-  await scanN8nCommunityJobs(metrics, seenN8nTopics, memory);
+  await scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook);
 
   // 4. Scan Hacker News Algolia queries
-  await scanHackerNews(metrics, seenHnIds, memory);
+  await scanHackerNews(metrics, seenHnIds, memory, playbook);
 
   // 5. Update live telemetry in repository
   await updateLiveTelemetry(metrics, Array.from(seenN8nTopics));
