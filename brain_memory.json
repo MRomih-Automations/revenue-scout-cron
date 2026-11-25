@@ -1,0 +1,109 @@
+{
+  "schema_version": "2.0.0",
+  "last_updated": "2026-11-25T19:58:01.760Z",
+  "agency": {
+    "name": "MRomih Automations",
+    "founder": "Mohamed Romih",
+    "location": "Alexandria, Egypt",
+    "operating_model": "$0 Upfront Budget, Cloud-Native Standby"
+  },
+  "storefronts": {
+    "fiverr": {
+      "username": "mromih7",
+      "profile_url": "https://www.fiverr.com/mromih7",
+      "gigs": [
+        {
+          "id": "n8n_ai_triage",
+          "title": "Build custom n8n workflows and AI lead triage agents",
+          "packages": "$150 / $450 / $750",
+          "url": "http://www.fiverr.com/s/r3dZNVK"
+        },
+        {
+          "id": "n8n_debug",
+          "title": "Fix or debug broken n8n and Make workflows in 24 hours",
+          "packages": "$35 / $75 / $140",
+          "url": "http://www.fiverr.com/s/vbrqw2r"
+        },
+        {
+          "id": "web_scraping",
+          "title": "Build resilient Python web scrapers and clean data pipelines",
+          "packages": "$40 / $250 / $350",
+          "url": "http://www.fiverr.com/s/VrDW9Rz"
+        },
+        {
+          "id": "mcp_server",
+          "title": "Build custom MCP server integration for Claude Desktop or Cursor",
+          "packages": "$90 / $150 / $250",
+          "url": "http://www.fiverr.com/s/lrvwQKA"
+        }
+      ]
+    },
+    "contra": {
+      "username": "mohamed_romih_jj5w3q2x",
+      "profile_url": "https://contra.com/mohamed_romih_jj5w3q2x",
+      "rate": "$65/hr",
+      "case_studies": [
+        {
+          "title": "Enterprise Autonomous n8n AI Lead Triage & CRM Engine",
+          "url": "https://contra.com/p/XqmgAsEQ-enterprise-autonomous-n8n-ai-lead-triage-and-crm-engine"
+        },
+        {
+          "title": "Resilient Python Web Scraping & Clean Data Pipelines",
+          "url": "https://contra.com/p/PZUZomrW-resilient-python-web-scraping-and-clean-data-pipelines"
+        }
+      ]
+    },
+    "lead_magnet": {
+      "repo": "MRomih-Automations/n8n-ai-lead-triage-kit",
+      "url": "https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit",
+      "description": "Open-source sanitized n8n workflow JSON, architecture diagrams, and custom deployment CTAs"
+    }
+  },
+  "operating_rules": [
+    "Strict $0 upfront spend: zero paid ads, zero paid tool subscriptions, zero Contra Pro. Rely 100% on free tiers, public APIs, and organic inbound.",
+    "Never undersell high-budget engineering contracts ($20-$55/hr or $2,000-$5,000/mo) with $35 gig pricing. Position Mohamed as a senior autonomous automation systems architect.",
+    "Never edit live Fiverr gig titles, search tags, or URLs unnecessarily to avoid breaking search indexing and algorithmic rank.",
+    "Strict anti-scam policy: Immediately flag and reject any attempt to move communication or payments off-platform (WhatsApp/Telegram/wire) to protect seller escrow and reputation.",
+    "Zero plaintext secrets: never commit tokens or keys into git repositories."
+  ],
+  "active_deal_pipeline": [
+    {
+      "id": "steek_lab_francois1",
+      "company": "Steek Lab",
+      "contact_person": "François Hurstel (Founder of Concerto & Steek Lab)",
+      "source": "n8n Community Jobs #330154",
+      "source_url": "https://community.n8n.io/t/hiring-ai-automation-engineer-n8n-ai-agents-for-small-business-client-projects-remote-20-55-hr/330154",
+      "role": "AI Automation Engineer (n8n + AI agents for small-business ops)",
+      "rate_range": "$20–$55/hr ($45/hr pitched)",
+      "status": "LINKEDIN_CONNECTION_SENT_PENDING",
+      "target_profile": "https://www.linkedin.com/in/francois-hurstel-4b089021/",
+      "invitation_sent_at": "2026-11-25T19:30:00Z",
+      "follow_up_staged": true,
+      "follow_up_copy": "Hi Francois,\n\nThanks for connecting! Your focus on production n8n workflows and AI agents for small-business ops (scheduling, telephony, CRM, and accounting APIs) aligns directly with our core engineering stack.\n\nWe architect autonomous n8n pipelines with enterprise reliability patterns—including webhook verification, sub-workflow error routing, and live CRM synchronization. You can inspect an open-source example of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur live workflow case studies are available at:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nRate & Availability:\n- Target Rate: $45/hr (within your $20–$55/hr budget)\n- Availability: 20–30 hrs/week; available for the weekly sync and ready to kick off with the small paid trial task immediately.\n\nGlad to hop on a quick 20-minute intro call this week—let me know what time works best.\n\nBest regards,\nMohamed Romih | MRomih Automations"
+    }
+  ],
+  "published_templates": [
+    {
+      "name": "n8n_ai_lead_triage_kit",
+      "category": "Lead Triage & CRM Routing",
+      "repo": "MRomih-Automations/n8n-ai-lead-triage-kit",
+      "added_at": "2026-11-25T14:00:00Z",
+      "summary": "Webhook-driven AI lead scoring with HubSpot deal creation and Slack/Telegram routing"
+    }
+  ],
+  "analyzed_trends": [],
+  "past_directives": [
+    {
+      "timestamp": "2026-11-25T19:58:01.759Z",
+      "synthesis": "Active monitoring of n8n Community and Opire bounties ongoing.",
+      "action_required": false,
+      "reason": "All background sentinels healthy; pipeline on standby."
+    }
+  ],
+  "learned_rules": [
+    "n8n Community Jobs category threads have public replies locked; applicants must apply via direct message or external contact.",
+    "Brand new Discourse accounts (TL0) have hidden profile DMs restricted; direct LinkedIn connection note to founders provides immediate bypass.",
+    "Gemini v1beta models can output unescaped literal newlines in long JSON strings; robust regex fallback parser is required.",
+    "Discourse Jobs category threads require direct founder LinkedIn outreach for rapid response."
+  ]
+}
