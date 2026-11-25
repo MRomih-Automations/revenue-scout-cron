@@ -7,9 +7,11 @@
   "issues_scanned": 10,
   "qualified_bounties_found": 1,
   "last_bounty_title": "Scottcjn/Rustchain #2239 ($100)",
-  "last_ceo_brain_timestamp": "2026-11-25T19:58:01.761Z",
+  "last_ceo_brain_timestamp": "2026-11-25T20:11:58.557Z",
   "last_push_title": "Autonomous Standby",
   "n8n_topics_scanned": 15,
   "opire_rewards_scanned": 3,
-  "human_escalation_active": false
+  "human_escalation_active": false,
+  "templates_in_lead_magnet": 3,
+  "active_governance_schedules": 4
 }

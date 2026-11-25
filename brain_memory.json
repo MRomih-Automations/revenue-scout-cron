@@ -1,6 +1,6 @@
 {
   "schema_version": "2.0.0",
-  "last_updated": "2026-11-25T19:58:01.760Z",
+  "last_updated": "2026-11-25T20:11:58.556Z",
   "agency": {
     "name": "MRomih Automations",
     "founder": "Mohamed Romih",
@@ -66,6 +66,32 @@
     "Strict anti-scam policy: Immediately flag and reject any attempt to move communication or payments off-platform (WhatsApp/Telegram/wire) to protect seller escrow and reputation.",
     "Zero plaintext secrets: never commit tokens or keys into git repositories."
   ],
+  "platform_schedules": {
+    "fiverr_analytics_audit": {
+      "name": "Fiverr Analytics & Impressions Audit",
+      "interval_days": 7,
+      "last_checked": "2026-11-25T12:00:00.000Z",
+      "description": "Read-only impressions, clicks, and conversion rate check without editing gig titles, tags, or search metadata."
+    },
+    "contra_jobs_sweep": {
+      "name": "Contra Free-Tier Jobs Sweep",
+      "interval_days": 5,
+      "last_checked": "2026-11-25T14:00:00.000Z",
+      "description": "Scan new free-tier automation, n8n, and AI briefs on Contra and apply with public repo and case studies."
+    },
+    "linkedin_content_and_outreach": {
+      "name": "LinkedIn Content & Founder Outreach",
+      "interval_days": 4,
+      "last_checked": "2026-11-25T19:30:00.000Z",
+      "description": "Publish staged demo post or send targeted founder connections in automation/AI spaces."
+    },
+    "github_lead_magnet_expansion": {
+      "name": "GitHub Open-Source Lead Magnet Expansion",
+      "interval_days": 7,
+      "last_checked": "2026-11-25T14:00:00.000Z",
+      "description": "Build and commit a new sanitized n8n workflow template to MRomih-Automations/n8n-ai-lead-triage-kit based on real market demand."
+    }
+  },
   "active_deal_pipeline": [
     {
       "id": "steek_lab_francois1",
@@ -78,6 +104,7 @@
       "status": "LINKEDIN_CONNECTION_SENT_PENDING",
       "target_profile": "https://www.linkedin.com/in/francois-hurstel-4b089021/",
       "invitation_sent_at": "2026-11-25T19:30:00Z",
+      "follow_up_due_at": "2026-11-27T19:30:00Z",
       "follow_up_staged": true,
       "follow_up_copy": "Hi Francois,\n\nThanks for connecting! Your focus on production n8n workflows and AI agents for small-business ops (scheduling, telephony, CRM, and accounting APIs) aligns directly with our core engineering stack.\n\nWe architect autonomous n8n pipelines with enterprise reliability patterns—including webhook verification, sub-workflow error routing, and live CRM synchronization. You can inspect an open-source example of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur live workflow case studies are available at:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nRate & Availability:\n- Target Rate: $45/hr (within your $20–$55/hr budget)\n- Availability: 20–30 hrs/week; available for the weekly sync and ready to kick off with the small paid trial task immediately.\n\nGlad to hop on a quick 20-minute intro call this week—let me know what time works best.\n\nBest regards,\nMohamed Romih | MRomih Automations"
     }
@@ -98,12 +125,19 @@
       "synthesis": "Active monitoring of n8n Community and Opire bounties ongoing.",
       "action_required": false,
       "reason": "All background sentinels healthy; pipeline on standby."
+    },
+    {
+      "timestamp": "2026-11-25T20:11:58.556Z",
+      "synthesis": "All automated telemetry and background sentinels are operating at peak efficiency with zero upfront spend. The Steek Lab LinkedIn connection is pendin",
+      "action_required": false,
+      "reason": "Zero platform timers are due, active deal follow-up for Steek Lab is not due until November 27, and scout telemetry confirms all GitHub Actions cron monitors are healthy. Zero human intervention required."
     }
   ],
   "learned_rules": [
     "n8n Community Jobs category threads have public replies locked; applicants must apply via direct message or external contact.",
     "Brand new Discourse accounts (TL0) have hidden profile DMs restricted; direct LinkedIn connection note to founders provides immediate bypass.",
     "Gemini v1beta models can output unescaped literal newlines in long JSON strings; robust regex fallback parser is required.",
-    "Discourse Jobs category threads require direct founder LinkedIn outreach for rapid response."
+    "Discourse Jobs category threads require direct founder LinkedIn outreach for rapid response.",
+    "Maintaining disciplined cadence on scheduled platform audits prevents algorithmic drift and ensures optimal inbound conversion across Fiverr and Contra."
   ]
 }
