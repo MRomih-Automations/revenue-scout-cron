@@ -37,6 +37,23 @@ async function fetchTelemetry() {
   return { status: 'NEW' };
 }
 
+function isGenuineN8nJob(t) {
+  if (!t || !t.title) return false;
+  if (t.id === 941 || t.pinned === true) return false;
+  const lower = t.title.toLowerCase();
+  if (lower.includes('guidelines') || lower.includes('about the jobs category')) return false;
+  if (
+    lower.includes('looking for small') ||
+    lower.includes('looking for n8n') ||
+    lower.includes('looking for projects') ||
+    lower.includes('available for hire') ||
+    lower.includes('for hire')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 async function fetchN8nJobs() {
   try {
     const res = await fetch('https://community.n8n.io/c/jobs/13.json', {
@@ -45,14 +62,17 @@ async function fetchN8nJobs() {
     if (!res.ok) return [];
     const data = await res.json();
     const topics = data?.topic_list?.topics || [];
-    return topics.slice(0, 15).map(t => ({
-      id: t.id,
-      title: t.title,
-      created_at: t.created_at,
-      views: t.views,
-      posts_count: t.posts_count,
-      url: `https://community.n8n.io/t/${t.slug}/${t.id}`
-    }));
+    return topics
+      .filter(isGenuineN8nJob)
+      .slice(0, 15)
+      .map(t => ({
+        id: t.id,
+        title: t.title,
+        created_at: t.created_at,
+        views: t.views,
+        posts_count: t.posts_count,
+        url: `https://community.n8n.io/t/${t.slug || t.id}/${t.id}`
+      }));
   } catch (err) {
     console.error('Failed to fetch n8n community jobs:', err.message);
     return [];
@@ -178,6 +198,12 @@ ${opireBounties.slice(0, 3).map(b => `  * ${b.amount} - ${b.issue_url}`).join('\
 
 Task:
 Synthesize this intelligence into a high-impact, razor-sharp 48-Hour Growth Directive for Mohamed.
+
+Strategic Rules:
+- STRICT OPPORTUNITY FILTERING: When prioritizing n8n Community opportunities, ONLY select genuine [HIRING] posts, direct client project requests, or high-value bounties where a paying company or founder is actively hiring.
+- NEVER recommend replying to category guidelines, forum meta posts, or freelancer self-promotion threads.
+- Position Mohamed as a senior autonomous AI automation engineer & systems architect utilizing our live assets (Contra portfolio at $65+/hr, open-source lead triage kit at https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit, and Fiverr engineering storefronts). Do not undersell high-budget client contracts ($20-$55/hr or $2,000+/mo) with low-ticket gig pricing.
+
 Respond strictly in JSON format (do not include markdown other than the JSON code fence):
 {
   "diagnosis": "2-3 concise sentences diagnosing the current demand signal, where immediate client dollars are clustering (e.g. n8n webhook fixes, AI triage, or scraper pipelines), and our current conversion leverage.",

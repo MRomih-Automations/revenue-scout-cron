@@ -292,10 +292,26 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics) {
 
     const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
 
+    function isGenuineN8nJob(t) {
+      if (!t || !t.title) return false;
+      if (t.id === 941 || t.pinned === true) return false;
+      const lower = t.title.toLowerCase();
+      if (lower.includes('guidelines') || lower.includes('about the jobs category')) return false;
+      if (
+        lower.includes('looking for small') ||
+        lower.includes('looking for n8n') ||
+        lower.includes('looking for projects') ||
+        lower.includes('available for hire') ||
+        lower.includes('for hire')
+      ) {
+        return false;
+      }
+      return true;
+    }
+
     for (const topic of topics) {
-      // Skip category guidelines and closed topics
-      if (topic.id === 941 || topic.pinned) continue;
-      if (topic.closed) continue;
+      // Skip forum guidelines, meta announcements, and freelancer self-promotion threads
+      if (!isGenuineN8nJob(topic)) continue;
 
       const createdTime = new Date(topic.created_at).getTime();
       if (createdTime < fourteenDaysAgo) continue;
