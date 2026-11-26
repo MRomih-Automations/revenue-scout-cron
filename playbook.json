@@ -1,7 +1,55 @@
 {
-  "schema_version": "1.0.0",
-  "last_updated": "2026-11-25T22:16:00.000Z",
+  "schema_version": "1.1.0",
+  "last_updated": "2026-11-26T16:10:00.000Z",
   "owner": "Mohamed Romih | MRomih Automations",
+  "dynamic_search_queries": [
+    {
+      "query": "\"n8n\" OR \"Make\" automation agency partner",
+      "target_source": "all",
+      "vertical_hint": "b2b_gtm_and_lead_triage",
+      "hits": 0,
+      "qualified_leads": 0,
+      "zero_hit_runs": 0
+    },
+    {
+      "query": "zapier OR make migration n8n",
+      "target_source": "all",
+      "vertical_hint": "ecommerce_and_creators",
+      "hits": 0,
+      "qualified_leads": 0,
+      "zero_hit_runs": 0
+    },
+    {
+      "query": "n8n self-hosted queue mode webhook",
+      "target_source": "all",
+      "vertical_hint": "ecommerce_and_creators",
+      "hits": 0,
+      "qualified_leads": 0,
+      "zero_hit_runs": 0
+    },
+    {
+      "query": "webhook idempotency OR Airtable HubSpot sync freelancer",
+      "target_source": "all",
+      "vertical_hint": "ecommerce_and_creators",
+      "hits": 0,
+      "qualified_leads": 0,
+      "zero_hit_runs": 0
+    },
+    {
+      "query": "AI lead triage OR voice agent developer",
+      "target_source": "all",
+      "vertical_hint": "smb_healthcare_and_services",
+      "hits": 0,
+      "qualified_leads": 0,
+      "zero_hit_runs": 0
+    }
+  ],
+  "winning_pitch_rules": [
+    "For buyers mentioning broken production webhooks, silent sync drops, or unreliable past freelancers, lead with the $150 fixed 48-hour Credited Diagnostic Audit (100% credited toward full build).",
+    "For Zapier or Make bill-shock migration threads, quantify task-cost savings on self-hosted n8n queue mode (Redis + worker containers) paired with HMAC SHA-256 verification and idempotency keys.",
+    "For digital/marketing agency partners seeking white-label automation capacity, emphasize Follow-the-Sun UTC+2 turnaround, NDA readiness, and reusable sub-workflow error handlers ($45–$65/hr).",
+    "Every proposal and outreach note must cite github.com/MRomih-Automations/n8n-ai-lead-triage-kit and contra.com/mohamed_romih_jj5w3q2x, and sign strictly as 'Mohamed Romih | MRomih Automations'."
+  ],
   "offer_ladder": {
     "diagnostic_audit": {
       "name": "Diagnostic Architecture Audit",

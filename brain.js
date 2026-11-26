@@ -157,6 +157,12 @@ function loadPlaybook() {
   if (fs.existsSync(pbPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(pbPath, 'utf8'));
+      if (!Array.isArray(parsed.dynamic_search_queries)) {
+        parsed.dynamic_search_queries = [];
+      }
+      if (!Array.isArray(parsed.winning_pitch_rules)) {
+        parsed.winning_pitch_rules = [];
+      }
       if (!Array.isArray(parsed.discovered_market_patterns)) {
         parsed.discovered_market_patterns = [];
       }
@@ -165,9 +171,11 @@ function loadPlaybook() {
     } catch (e) {
       console.warn('[CEO Brain] Error parsing playbook.json:', e.message);
       return {
-        schema_version: '1.0.0',
+        schema_version: '1.1.0',
         last_updated: new Date().toISOString(),
         owner: 'Mohamed Romih | MRomih Automations',
+        dynamic_search_queries: [],
+        winning_pitch_rules: [],
         offer_ladder: {},
         vertical_playbooks: {},
         objection_handlers: {},
@@ -178,9 +186,11 @@ function loadPlaybook() {
     }
   }
   return {
-    schema_version: '1.0.0',
+    schema_version: '1.1.0',
     last_updated: new Date().toISOString(),
     owner: 'Mohamed Romih | MRomih Automations',
+    dynamic_search_queries: [],
+    winning_pitch_rules: [],
     offer_ladder: {},
     vertical_playbooks: {},
     objection_handlers: {},
@@ -238,6 +248,8 @@ function validateSystemSchemas(memory, playbook) {
   if (!memory.system_health_baselines || typeof memory.system_health_baselines !== 'object') errors.push('brain_memory.json missing system_health_baselines');
 
   if (playbook._parseError) errors.push(playbook._parseError);
+  if (!Array.isArray(playbook.dynamic_search_queries)) errors.push('playbook.json dynamic_search_queries must be an array');
+  if (!Array.isArray(playbook.winning_pitch_rules)) errors.push('playbook.json winning_pitch_rules must be an array');
   if (!playbook.offer_ladder || Object.keys(playbook.offer_ladder).length === 0) errors.push('playbook.json missing offer_ladder tiers');
   if (!playbook.vertical_playbooks || Object.keys(playbook.vertical_playbooks).length === 0) errors.push('playbook.json missing vertical_playbooks');
   if (!playbook.objection_handlers || typeof playbook.objection_handlers !== 'object') errors.push('playbook.json missing objection_handlers');
@@ -996,21 +1008,10 @@ ${JSON.stringify({ vertical_playbooks: Object.keys(playbook.vertical_playbooks |
     playbook.discovered_market_patterns = (playbook.discovered_market_patterns || []).concat(stamped).slice(-30);
     savePlaybook(playbook);
 
-    const committed = await commitGitHubFile(
-      'revenue-scout-cron',
-      'playbook.json',
-      JSON.stringify(playbook, null, 2),
+    const committed = await persistPlaybookToGitHub(
+      playbook,
       'chore(playbook): weekly Principal QA-approved knowledge distillation [skip ci]'
     );
-
-    // Keep GitHub Actions runner HEAD aligned with Contents API commit before workflow step pushes memory/telemetry
-    if (committed && process.env.GITHUB_ACTIONS === 'true') {
-      try {
-        execSync('git fetch origin main && git reset --mixed origin/main', { cwd: __dirname, stdio: 'ignore' });
-      } catch (gitErr) {
-        console.warn('[Knowledge Distillation] Git runner sync warning:', gitErr.message);
-      }
-    }
 
     if (memory.platform_schedules && memory.platform_schedules.knowledge_distillation) {
       memory.platform_schedules.knowledge_distillation.last_checked = new Date().toISOString();
@@ -1076,6 +1077,521 @@ async function auditSystemHealthBaselines(memory, telemetry) {
   return { scoutHealthy, ageHours, statusLine };
 }
 
+async function persistPlaybookToGitHub(playbook, commitMessage) {
+  const committed = await commitGitHubFile(
+    'revenue-scout-cron',
+    'playbook.json',
+    JSON.stringify(playbook, null, 2),
+    commitMessage
+  );
+  if (committed && process.env.GITHUB_ACTIONS === 'true') {
+    try {
+      execSync('git fetch origin main && git reset --mixed origin/main', { cwd: __dirname, stdio: 'ignore' });
+    } catch (gitErr) {
+      console.warn('[Playbook Persist] Git runner sync warning:', gitErr.message);
+    }
+  }
+  return committed;
+}
+
+function hasSpamOrLowBudgetTerms(text) {
+  if (!text) return false;
+  return /\b(for hire|unpaid|free sample|free work|commission[- ]only|equity[- ]only|cheap|\$[12]?\d\b|fiver micro)\b/i.test(String(text)) ||
+    /Autonomous Chief Operating Officer|Autonomous COO|\bAI Assistant\b/i.test(String(text));
+}
+
+async function runTargetingQACritic(candidateUpdate, playbook) {
+  const queries = Array.isArray(candidateUpdate?.new_queries) ? candidateUpdate.new_queries : [];
+  const rules = Array.isArray(candidateUpdate?.updated_winning_pitch_rules) ? candidateUpdate.updated_winning_pitch_rules : [];
+  const combinedCheckText = [...queries.map(q => q.query || ''), ...rules].join(' ');
+  if (hasSpamOrLowBudgetTerms(combinedCheckText)) {
+    return {
+      score: 4,
+      approved: false,
+      critique: 'Rejected candidate queries or pitch rules containing spam, low-budget traps, or robotic AI self-titles.',
+      feedback: 'Remove low-budget, unpaid, or non-founder phrases.'
+    };
+  }
+
+  const prompt = `
+You are the Principal QA Critic at MRomih Automations reviewing candidate playbook.json updates (dynamic_search_queries and winning_pitch_rules).
+
+Existing Active Queries:
+${JSON.stringify((playbook.dynamic_search_queries || []).map(q => q.query), null, 2)}
+
+Candidate Evolution Update:
+${JSON.stringify(candidateUpdate, null, 2)}
+
+Review Criteria (Score >= 9 required to PASS):
+1. Commercial Precision (1-10): Do proposed queries specifically target agency partnerships, Zapier/Make bill-shock migrations, n8n queue mode, broken webhooks, or AI triage/voice agents?
+2. Zero Spam / High-Ticket Discipline (1-10): Strictly zero unpaid, "[For Hire]", low-budget ($5-$25), or generic noise terms?
+3. Identity Hygiene (1-10): Strictly signed/aligned with "Mohamed Romih | MRomih Automations", zero robotic AI self-titles?
+
+Output strictly valid JSON:
+{
+  "score": 9 or 10,
+  "approved": true or false,
+  "critique": "1-2 sentences evaluating commercial precision and hygiene",
+  "feedback": "Revision note or 'Ready for production'"
+}`;
+
+  try {
+    const raw = await callGemini(prompt);
+    const parsed = safeJsonParse(raw);
+    if (parsed && typeof parsed.score !== 'undefined') {
+      if (hasSpamOrLowBudgetTerms(combinedCheckText)) {
+        return { ...parsed, score: Math.min(Number(parsed.score) || 0, 5), approved: false };
+      }
+      return parsed;
+    }
+    throw new Error('Invalid targeting QA JSON from Gemini');
+  } catch (err) {
+    console.warn('[Targeting QA] Fallback scoring:', err.message);
+    const queriesValid = queries.length <= 2 && queries.every(q => q && typeof q.query === 'string' && q.query.trim().length >= 5);
+    const rulesValid = rules.every(r => typeof r === 'string' && r.trim().length >= 10);
+    const pass = queriesValid && rulesValid && !hasSpamOrLowBudgetTerms(combinedCheckText);
+    return {
+      score: pass ? 9 : 6,
+      approved: pass,
+      critique: pass ? 'Deterministic hygiene and commercial intent validation passed.' : 'Candidate update failed query/rule validation.',
+      feedback: pass ? 'Ready for production' : 'Fix malformed or spam terms'
+    };
+  }
+}
+
+async function studyExternalMarketSignals(memory, n8nJobs = []) {
+  console.log('🔭 [Brain Study] Studying HN Algolia, GitHub (n8n/ai-agent repos), and n8n Community latest topics...');
+  const hnSignals = [];
+  const githubRepos = [];
+  const n8nLatest = [];
+
+  // 1. Hacker News Algolia study
+  for (const q of ['n8n OR "ai agent"', 'zapier migration OR webhook']) {
+    try {
+      const res = await fetch(`https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(q)}&tags=(story,comment)&hitsPerPage=10`, {
+        headers: { 'User-Agent': 'MRomihAutomations-Brain/1.0' },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        for (const hit of (data?.hits || []).slice(0, 6)) {
+          const text = String(hit.comment_text || hit.story_text || hit.title || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          if (text) {
+            hnSignals.push({
+              id: hit.objectID,
+              author: hit.author || 'hn_user',
+              title: hit.story_title || hit.title || q,
+              url: `https://news.ycombinator.com/item?id=${hit.objectID}`,
+              snippet: text.slice(0, 220)
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[Brain Study] HN source warning (${q}):`, err.message);
+    }
+  }
+
+  // 2. GitHub updated n8n / ai-agent repositories
+  try {
+    const ghHeaders = {
+      'User-Agent': 'MRomihAutomations-Brain/1.0',
+      'Accept': 'application/vnd.github.v3+json'
+    };
+    if (GH_PAT) ghHeaders['Authorization'] = 'token ' + GH_PAT;
+    const res = await fetch('https://api.github.com/search/repositories?q=(topic:n8n+OR+topic:ai-agent)&sort=updated&order=desc&per_page=10', {
+      headers: ghHeaders,
+      signal: AbortSignal.timeout(10000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      for (const r of (data?.items || []).slice(0, 8)) {
+        githubRepos.push({
+          full_name: r.full_name,
+          stars: r.stargazers_count || 0,
+          description: (r.description || '').slice(0, 180),
+          topics: Array.isArray(r.topics) ? r.topics.slice(0, 5) : [],
+          url: r.html_url
+        });
+      }
+    } else {
+      console.warn(`[Brain Study] GitHub search returned HTTP ${res.status}; isolated gracefully.`);
+    }
+  } catch (err) {
+    console.warn('[Brain Study] GitHub source warning:', err.message);
+  }
+
+  // 3. n8n Community latest topics
+  try {
+    const res = await fetch('https://community.n8n.io/latest.json', {
+      headers: { 'User-Agent': 'MRomihAutomations-Brain/1.0' },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      for (const t of (data?.topic_list?.topics || []).slice(0, 12)) {
+        if (!t || !t.id || t.pinned) continue;
+        n8nLatest.push({
+          id: t.id,
+          title: t.title,
+          views: t.views || 0,
+          replies: t.reply_count || 0,
+          url: `https://community.n8n.io/t/${t.slug || t.id}/${t.id}`
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[Brain Study] n8n Community latest.json warning:', err.message);
+  }
+
+  const allN8n = [...(n8nJobs || []).slice(0, 4), ...n8nLatest.slice(0, 8)];
+  const totalSignals = hnSignals.length + githubRepos.length + allN8n.length;
+
+  let studySynthesis = null;
+  if (totalSignals > 0) {
+    try {
+      const studyPrompt = `
+You are the Executive Market Researcher for MRomih Automations (Founder: Mohamed Romih).
+Analyze today's live market telemetry across Hacker News (${hnSignals.length} items), GitHub n8n/ai-agent repos (${githubRepos.length} repos), and n8n Community topics (${allN8n.length} threads):
+
+HN Signals: ${JSON.stringify(hnSignals.slice(0, 6), null, 2)}
+GitHub Trending/Updated Repos: ${JSON.stringify(githubRepos.slice(0, 6), null, 2)}
+n8n Community Threads: ${JSON.stringify(allN8n.slice(0, 8), null, 2)}
+
+Extract:
+1. A concise new market research note capturing recurring pain points, stacks, and buyer urgency.
+2. Whether a high-frequency buyer bottleneck exists today suitable for a LinkedIn teardown pointing to https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit (signed strictly "Mohamed Romih | MRomih Automations", NO robotic AI titles).
+
+Output strictly valid JSON:
+{
+  "topic": "Short specific vertical/pain topic (e.g. Zapier-to-n8n Queue Mode & Webhook Reliability)",
+  "recurring_problems": "1-2 sentences capturing recurring buyer failures observed today",
+  "tech_stacks": "Comma-separated stack list",
+  "pricing_benchmarks": "Realistic target tier/rate ($150 audit / $500-$1,500+ / $45-$65/hr)",
+  "what_i_learned_today": "1-2 concise sentences summarizing concrete demand trends observed across today's sources",
+  "high_frequency_bottleneck": null or {
+    "title": "LinkedIn teardown hook title",
+    "post_copy": "Practical 4-6 line architecture teardown ending with https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and signed 'Mohamed Romih | MRomih Automations'"
+  }
+}`;
+      const raw = await callGemini(studyPrompt);
+      studySynthesis = safeJsonParse(raw);
+    } catch (err) {
+      console.warn('[Brain Study] Synthesis fallback:', err.message);
+    }
+  }
+
+  if (!studySynthesis || !studySynthesis.topic) {
+    const topThread = allN8n[0]?.title || hnSignals[0]?.title || 'n8n Webhook Reliability & Zapier Migration';
+    const hasPainPattern = allN8n.some(t => /zapier|make|webhook|error|fail|queue|agent/i.test(t.title || '')) || hnSignals.length > 0;
+    studySynthesis = {
+      topic: topThread.slice(0, 72),
+      recurring_problems: `Live study across ${hnSignals.length} HN hits, ${githubRepos.length} GitHub repos, and ${allN8n.length} n8n threads highlights ongoing demand for resilient webhooks, Zapier/Make cost reduction, and structured AI triage.`,
+      tech_stacks: 'n8n, Webhooks, Redis Queue Mode, Airtable, HubSpot, AI Lead Triage',
+      pricing_benchmarks: '$150 Credited Audit | $500–$850 turnkey pipeline | $45–$65/hr',
+      what_i_learned_today: `Analyzed ${totalSignals} live external signals (HN=${hnSignals.length}, GitHub=${githubRepos.length}, n8n=${allN8n.length}); recurring friction centers on silent webhook failures and workflow scaling.`,
+      high_frequency_bottleneck: hasPainPattern ? {
+        title: `Why ${topThread.slice(0, 48)} Fails Silently (And Our 3-Node n8n Fix)`,
+        post_copy: `Most automation builds look great in demos—then drop leads or duplicate CRM rows the moment an API rate-limits or retries.\n\nAcross today's n8n and engineering threads, the same reliability gap keeps costing teams real revenue: missing HMAC verification, missing transaction-ID idempotency, and zero dead-letter alerting.\n\nWe open-sourced our production pattern (sub-2.4s webhook triage + validation + error routing):\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nMohamed Romih | MRomih Automations`
+      } : null
+    };
+  }
+
+  // Deduplicate and persist concise finding into market_research_notes (capped at 40)
+  if (!Array.isArray(memory.market_research_notes)) memory.market_research_notes = [];
+  const normTopic = String(studySynthesis.topic || '').trim().toLowerCase();
+  const alreadyExists = memory.market_research_notes.some(
+    n => String(n.topic || '').trim().toLowerCase() === normTopic
+  );
+  if (normTopic && !alreadyExists) {
+    memory.market_research_notes.push({
+      timestamp: new Date().toISOString(),
+      source: 'external_market_study',
+      topic: sanitizeClientCopy(studySynthesis.topic),
+      recurring_problems: sanitizeClientCopy(studySynthesis.recurring_problems),
+      tech_stacks: sanitizeClientCopy(studySynthesis.tech_stacks),
+      pricing_benchmarks: sanitizeClientCopy(studySynthesis.pricing_benchmarks)
+    });
+    if (memory.market_research_notes.length > 40) {
+      memory.market_research_notes = memory.market_research_notes.slice(-40);
+    }
+  }
+
+  return {
+    source_counts: { hn: hnSignals.length, github_repos: githubRepos.length, n8n_latest: n8nLatest.length },
+    signals_count: totalSignals,
+    hn_signals: hnSignals,
+    github_repos: githubRepos,
+    n8n_latest: n8nLatest,
+    topic: studySynthesis.topic,
+    what_i_learned_today: sanitizeClientCopy(studySynthesis.what_i_learned_today || studySynthesis.recurring_problems),
+    high_frequency_bottleneck: studySynthesis.high_frequency_bottleneck || null
+  };
+}
+
+function stageStudiedLinkedInPost(memory, bottleneck) {
+  if (!bottleneck || !bottleneck.post_copy) return null;
+  if (!Array.isArray(memory.staged_linkedin_posts)) memory.staged_linkedin_posts = [];
+
+  const title = sanitizeClientCopy(bottleneck.title || 'n8n Reliability Architecture Teardown');
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  const dup = memory.staged_linkedin_posts.some(
+    p => String(p.title || '').toLowerCase() === title.toLowerCase() ||
+      (p.status === 'STAGED_FOR_LINKEDIN' && new Date(p.created_at || 0).getTime() > cutoff)
+  );
+  if (dup) return null;
+
+  let copy = sanitizeClientCopy(bottleneck.post_copy).trim();
+  if (!copy.includes('github.com/MRomih-Automations/n8n-ai-lead-triage-kit')) {
+    copy += '\n\nInspect our open-source architecture: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit';
+  }
+  if (!copy.includes('Mohamed Romih | MRomih Automations')) {
+    copy += '\n\nMohamed Romih | MRomih Automations';
+  }
+
+  const entry = {
+    id: `li_study_${Date.now()}`,
+    created_at: new Date().toISOString(),
+    source: 'daily_market_study',
+    title,
+    post_copy: copy,
+    status: 'STAGED_FOR_LINKEDIN'
+  };
+  memory.staged_linkedin_posts.push(entry);
+  if (memory.staged_linkedin_posts.length > 10) {
+    memory.staged_linkedin_posts = memory.staged_linkedin_posts.slice(-10);
+  }
+  return entry;
+}
+
+function evaluateNorthStarPacing(memory) {
+  const TARGET_USD = 3000;
+  const funnel = memory?.conversion_funnel || {};
+  const proposals_sent = Number(funnel.proposals_sent) || 0;
+  const replies_received = Number(funnel.replies_received) || 0;
+  const calls_booked = Number(funnel.calls_booked) || 0;
+  const deals_won = Number(funnel.deals_won) || 0;
+  const total_revenue_usd = Number(funnel.total_revenue_usd) || 0;
+
+  const revenue_gap_usd = Math.max(0, TARGET_USD - total_revenue_usd);
+  const reply_rate_pct = proposals_sent > 0 ? Number(((replies_received / proposals_sent) * 100).toFixed(1)) : 0;
+  const call_rate_pct = replies_received > 0 ? Number(((calls_booked / replies_received) * 100).toFixed(1)) : 0;
+  const win_rate_pct = calls_booked > 0
+    ? Number(((deals_won / calls_booked) * 100).toFixed(1))
+    : (proposals_sent > 0 ? Number(((deals_won / proposals_sent) * 100).toFixed(1)) : 0);
+
+  let primary_bottleneck = 'outbound volume';
+  let bottleneck_prescription = 'Increase high-intent proposal volume across 48h Contra/Fiverr/LinkedIn sweeps and Scout feeds to surpass 10+ active shots on goal.';
+
+  if (revenue_gap_usd === 0) {
+    primary_bottleneck = 'retainer expansion';
+    bottleneck_prescription = '$3,000/mo milestone reached — shift focus to recurring $45–$65/hr SLA retainers and client expansion.';
+  } else if (proposals_sent < 5) {
+    primary_bottleneck = 'outbound volume';
+    bottleneck_prescription = `Only ${proposals_sent} outbound proposal(s) logged vs. $3,000/mo target ($${revenue_gap_usd} gap); maximize 48h Fiverr/Contra/LinkedIn sweeps and Scout alerts.`;
+  } else if (reply_rate_pct < 15) {
+    primary_bottleneck = 'proposal hook';
+    bottleneck_prescription = `Reply rate is ${reply_rate_pct}% across ${proposals_sent} proposals; tighten first-2-line failure diagnosis + $150 Credited Diagnostic Audit hook.`;
+  } else if (calls_booked === 0 || win_rate_pct < 35) {
+    primary_bottleneck = 'closing speed';
+    bottleneck_prescription = `Replies (${replies_received}) are landing, but win conversion is ${win_rate_pct}%; accelerate discovery scheduling, 48h follow-ups, and fixed-scope $150->$650 kickoff closes.`;
+  }
+
+  return {
+    target_monthly_usd: TARGET_USD,
+    total_revenue_usd,
+    revenue_gap_usd,
+    proposals_sent,
+    replies_received,
+    calls_booked,
+    deals_won,
+    reply_rate_pct,
+    call_rate_pct,
+    win_rate_pct,
+    primary_bottleneck,
+    bottleneck_prescription
+  };
+}
+
+async function evolveAcquisitionTargeting(memory, playbook, telemetry, studySummary, pacing) {
+  if (!Array.isArray(playbook.dynamic_search_queries)) playbook.dynamic_search_queries = [];
+  if (!Array.isArray(playbook.winning_pitch_rules)) playbook.winning_pitch_rules = [];
+
+  const remoteStats = (telemetry && telemetry.query_stats && typeof telemetry.query_stats === 'object')
+    ? telemetry.query_stats
+    : {};
+
+  // 1. Merge query performance counters from telemetry.json
+  const mergedQueries = playbook.dynamic_search_queries.map(item => {
+    const stat = remoteStats[item.query] || {};
+    return {
+      ...item,
+      hits: Math.max(Number(item.hits) || 0, Number(stat.hits) || 0),
+      qualified_leads: Math.max(Number(item.qualified_leads) || 0, Number(stat.qualified_leads) || 0),
+      zero_hit_runs: typeof stat.zero_hit_runs === 'number' ? stat.zero_hit_runs : (Number(item.zero_hit_runs) || 0)
+    };
+  });
+
+  // 2. Automatically prune dead queries (zero_hit_runs >= 5 && qualified_leads === 0)
+  const prunedQueries = [];
+  const keptQueries = [];
+  for (const q of mergedQueries) {
+    if ((Number(q.zero_hit_runs) || 0) >= 5 && (Number(q.qualified_leads) || 0) === 0) {
+      prunedQueries.push(q);
+    } else {
+      keptQueries.push(q);
+    }
+  }
+
+  let addedQueries = [];
+  let pitchRulesUpdated = false;
+  let qaResult = null;
+  let playbookDirty = prunedQueries.length > 0;
+  let advice = {
+    what_i_learned_today: studySummary?.what_i_learned_today || 'Monitoring external HN, GitHub, and n8n demand signals.',
+    search_targeting_upgrades: prunedQueries.length > 0
+      ? `Pruned ${prunedQueries.length} zero-hit query(s): ${prunedQueries.map(q => q.query).join('; ')}.`
+      : 'All active Scout search queries performing within target threshold (0 pruned).',
+    recommended_founder_move: pacing?.bottleneck_prescription || 'Execute due 48h marketplace sweeps and active deal follow-ups.'
+  };
+
+  // 3. Instruct Gemini to propose up to 2 sharp replacement queries + updated winning_pitch_rules when pruning occurred or new study signals justify refinement
+  const shouldConsultEvolution = prunedQueries.length > 0 || keptQueries.length < 4 || (studySummary && studySummary.signals_count > 0);
+  if (shouldConsultEvolution) {
+    try {
+      const evoPrompt = `
+You are the Growth & Client Acquisition Director for MRomih Automations (Founder: Mohamed Romih).
+Evaluate today's external market study, conversion funnel pacing, and Scout query telemetry to evolve playbook.json targeting:
+
+Pacing & Bottleneck: ${JSON.stringify(pacing, null, 2)}
+Market Study Today: ${JSON.stringify({ topic: studySummary?.topic, learned: studySummary?.what_i_learned_today, sources: studySummary?.source_counts }, null, 2)}
+Kept Search Queries: ${JSON.stringify(keptQueries, null, 2)}
+Pruned Dead Queries (zero_hit_runs >= 5, qualified_leads === 0): ${JSON.stringify(prunedQueries.map(q => q.query), null, 2)}
+Current Winning Pitch Rules: ${JSON.stringify(playbook.winning_pitch_rules, null, 2)}
+
+Mandates:
+- Propose AT MOST 2 sharp replacement queries if dead queries were pruned OR if kept queries < 5 (targeting agency partners, Zapier/Make bill-shock migrations, n8n queue mode, broken webhooks, or AI/voice triage). Return [] if existing queries are already sharp and full.
+- Zero spam, zero "[For Hire]", zero free/unpaid/low-budget ($5-$25) terms.
+- Optionally refine winning_pitch_rules (or return null if unchanged) aligned strictly with "Mohamed Romih | MRomih Automations".
+- Return sharp executive CEO advice fields.
+
+Output strictly valid JSON:
+{
+  "new_queries": [
+    { "query": "concise search string", "target_source": "all", "vertical_hint": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines" }
+  ],
+  "updated_winning_pitch_rules": null or ["rule 1", "..."],
+  "what_i_learned_today": "1-2 sentences capturing what market demand showed today",
+  "search_targeting_upgrades": "1 sentence summarizing pruned/added Scout queries and pitch refinements",
+  "recommended_founder_move": "Highest-leverage 1-2 sentence founder move aligned to primary bottleneck (${pacing?.primary_bottleneck || 'outbound volume'})"
+}`;
+      const raw = await callGemini(evoPrompt);
+      const parsed = safeJsonParse(raw);
+      if (parsed) {
+        if (parsed.what_i_learned_today) advice.what_i_learned_today = sanitizeClientCopy(parsed.what_i_learned_today);
+        if (parsed.recommended_founder_move) advice.recommended_founder_move = sanitizeClientCopy(parsed.recommended_founder_move);
+
+        const existingLower = new Set(keptQueries.map(q => String(q.query).toLowerCase().trim()));
+        const candidateNewQueries = (Array.isArray(parsed.new_queries) ? parsed.new_queries : [])
+          .filter(q => q && typeof q.query === 'string' && q.query.trim().length >= 5 && !existingLower.has(q.query.toLowerCase().trim()) && !hasSpamOrLowBudgetTerms(q.query))
+          .slice(0, 2)
+          .map(q => ({
+            query: q.query.trim(),
+            target_source: q.target_source || 'all',
+            vertical_hint: q.vertical_hint || 'b2b_gtm_and_lead_triage',
+            hits: 0,
+            qualified_leads: 0,
+            zero_hit_runs: 0
+          }));
+
+        const candidateRules = Array.isArray(parsed.updated_winning_pitch_rules) && parsed.updated_winning_pitch_rules.length > 0
+          ? parsed.updated_winning_pitch_rules.map(r => sanitizeClientCopy(String(r)).trim()).filter(Boolean)
+          : null;
+
+        const rulesChanged = Boolean(
+          candidateRules && JSON.stringify(candidateRules) !== JSON.stringify(playbook.winning_pitch_rules)
+        );
+
+        if (candidateNewQueries.length > 0 || rulesChanged) {
+          qaResult = await runTargetingQACritic(
+            {
+              pruned_queries: prunedQueries.map(q => q.query),
+              new_queries: candidateNewQueries,
+              updated_winning_pitch_rules: candidateRules || playbook.winning_pitch_rules
+            },
+            playbook
+          );
+          if (qaResult.approved && (qaResult.score || 0) >= 9) {
+            if (candidateNewQueries.length > 0) {
+              addedQueries = candidateNewQueries;
+              playbookDirty = true;
+            }
+            if (rulesChanged && candidateRules) {
+              playbook.winning_pitch_rules = candidateRules;
+              pitchRulesUpdated = true;
+              playbookDirty = true;
+            }
+            advice.search_targeting_upgrades = sanitizeClientCopy(
+              parsed.search_targeting_upgrades ||
+              `Pruned ${prunedQueries.length}, added ${addedQueries.length} QA-approved query(s) (${qaResult.score}/10).`
+            );
+          } else {
+            if (!Array.isArray(memory.error_postmortems)) memory.error_postmortems = [];
+            memory.error_postmortems.push({
+              timestamp: new Date().toISOString(),
+              event: 'Targeting Evolution QA Rejection',
+              root_cause: qaResult.critique || 'Candidate queries/rules scored below 9/10.',
+              fix_applied: 'Aborted injection of rejected replacement queries while preserving dead-query pruning.'
+            });
+            advice.search_targeting_upgrades = `Pruned ${prunedQueries.length} dead query(s); rejected candidate replacements during Principal QA (${qaResult.score || 0}/10).`;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Targeting Evolution] Fallback evaluation:', err.message);
+      if (prunedQueries.length > 0) {
+        const fallbackCandidates = [
+          { query: 'n8n workflow automation freelancer OR consultant', target_source: 'all', vertical_hint: 'b2b_gtm_and_lead_triage', hits: 0, qualified_leads: 0, zero_hit_runs: 0 }
+        ].filter(c => !keptQueries.some(k => k.query.toLowerCase() === c.query.toLowerCase()));
+        if (fallbackCandidates.length > 0) {
+          qaResult = await runTargetingQACritic({ pruned_queries: prunedQueries.map(q => q.query), new_queries: fallbackCandidates, updated_winning_pitch_rules: playbook.winning_pitch_rules }, playbook);
+          if (qaResult.approved && (qaResult.score || 0) >= 9) {
+            addedQueries = fallbackCandidates;
+            playbookDirty = true;
+            advice.search_targeting_upgrades = `Pruned ${prunedQueries.length} dead query(s) and injected ${addedQueries.length} fallback query (QA ${qaResult.score}/10).`;
+          }
+        }
+      }
+    }
+  }
+
+  playbook.dynamic_search_queries = [...keptQueries, ...addedQueries];
+
+  let persisted = false;
+  if (playbookDirty || (telemetry && Object.keys(remoteStats).length > 0)) {
+    savePlaybook(playbook);
+    if (playbookDirty) {
+      persisted = await persistPlaybookToGitHub(
+        playbook,
+        `chore(playbook): autonomous query evolution (pruned=${prunedQueries.length}, added=${addedQueries.length}) [skip ci]`
+      );
+    }
+  }
+
+  return {
+    pruned_queries: prunedQueries.map(q => q.query),
+    added_queries: addedQueries.map(q => q.query),
+    pitch_rules_updated: pitchRulesUpdated,
+    qa_score: qaResult ? qaResult.score : null,
+    qa_approved: qaResult ? qaResult.approved : null,
+    persisted,
+    targeting_upgraded: playbookDirty,
+    what_i_learned_today: advice.what_i_learned_today,
+    search_targeting_upgrades: advice.search_targeting_upgrades,
+    recommended_founder_move: advice.recommended_founder_move
+  };
+}
+
 async function run() {
   const isDryRun = process.argv.includes('--dry-run');
   console.log('🧠 [CEO Brain] Initializing Executive Intelligence v2 Cycle...');
@@ -1083,7 +1599,7 @@ async function run() {
   const memory = loadMemory();
   const playbook = loadPlaybook();
   const schemaErrors = validateSystemSchemas(memory, playbook);
-  console.log(`📘 [CEO Brain] Loaded playbook.json (${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns).`);
+  console.log(`📘 [CEO Brain] Loaded playbook.json (${(playbook.dynamic_search_queries || []).length} dynamic queries, ${(playbook.winning_pitch_rules || []).length} pitch rules, ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns).`);
 
   if (schemaErrors.length > 0) {
     if (!isDryRun) {
@@ -1095,10 +1611,20 @@ async function run() {
 
   if (isDryRun) {
     const governance = evaluateGovernanceSchedules(memory, []);
+    const pacing = evaluateNorthStarPacing(memory);
     console.log('[CEO Brain] --dry-run passed: loaded brain_memory.json and playbook.json cleanly with 0 schema errors.', {
       knowledgeDistillationDue: governance.knowledgeDistillationDue,
       distillSignalCount: governance.distillSignalCount,
       systemHealthBaselines: memory.system_health_baselines?.overall_status,
+      dynamicQueriesCount: (playbook.dynamic_search_queries || []).length,
+      winningPitchRulesCount: (playbook.winning_pitch_rules || []).length,
+      northStarPacing: {
+        revenue_gap_usd: pacing.revenue_gap_usd,
+        reply_rate_pct: pacing.reply_rate_pct,
+        call_rate_pct: pacing.call_rate_pct,
+        win_rate_pct: pacing.win_rate_pct,
+        primary_bottleneck: pacing.primary_bottleneck
+      },
       dueBrowserSweeps: governance.dueBrowserSchedules.map(s => `${s.id} (${s.interval_days}d)`),
       schedules: Object.fromEntries(Object.entries(governance.scheduleStatus).map(([k, s]) => [k, `${s.interval_days}d (due=${s.is_due})`]))
     });
@@ -1115,8 +1641,12 @@ async function run() {
   const hnHits = await fetchHnHits();
   const repoTemplates = await fetchRepoTemplates();
   const governance = evaluateGovernanceSchedules(memory, repoTemplates);
+  const pacing = evaluateNorthStarPacing(memory);
+  const studyResult = await studyExternalMarketSignals(memory, n8nJobs);
+  const stagedStudyPost = studyResult.high_frequency_bottleneck
+    ? stageStudiedLinkedInPost(memory, studyResult.high_frequency_bottleneck)
+    : null;
 
-  // Also pass any staged LinkedIn showcase post context when linkedin_content_and_outreach is due
   const pendingLinkedInPosts = (memory.staged_linkedin_posts || []).filter(p => p.status === 'STAGED_FOR_LINKEDIN');
 
   // STAGE A: Deep Study, 3-Horizon Strategic Reasoning & ROI Calculation Prompt
@@ -1131,8 +1661,10 @@ HUMAN FOUNDER IDENTITY & SIGN-OFF MANDATES:
 Executive Charter & Commercial Playbook:
 - Charter: ${JSON.stringify(memory.executive_charter, null, 2)}
 - Milestones: ${JSON.stringify(memory.company_history_milestones, null, 2)}
-- Conversion Funnel: ${JSON.stringify(memory.conversion_funnel, null, 2)}
+- $3,000/mo North Star Pacing & Bottleneck: ${JSON.stringify(pacing, null, 2)}
+- Today's Market Study Summary: ${JSON.stringify({ sources: studyResult.source_counts, topic: studyResult.topic, learned: studyResult.what_i_learned_today }, null, 2)}
 - Offer Ladder: ${JSON.stringify(playbook.offer_ladder, null, 2)}
+- Winning Pitch Rules: ${JSON.stringify(playbook.winning_pitch_rules || [], null, 2)}
 - Vertical Playbooks Keys: ${JSON.stringify(Object.keys(playbook.vertical_playbooks || {}))}
 - Competitive Positioning: ${JSON.stringify(playbook.competitive_positioning || {}, null, 2)}
 - System Health Audit: ${healthAudit.statusLine}
@@ -1166,10 +1698,10 @@ ${hnHits.slice(0, 3).map(h => `  * [${h.query}] ${h.author}: ${h.snippet}`).join
 
 Executive Intelligence v2 — 3-Horizon Strategic Reasoning & 5-Stage Mandates:
 - Horizon 1 — Today (Tactical): Evaluate immediate deal follow-ups, phone sync commands, or high-ROI leads.
-- Horizon 2 — This Week (Operational): Diagnose pipeline bottlenecks (e.g., if proposals_sent > 0 with 0 replies_received, prioritize concrete proof assets and higher-converting outreach hooks) and trigger due platform sweeps.
+- Horizon 2 — This Week (Operational): Address primary North Star bottleneck ("${pacing.primary_bottleneck}") and trigger due 48h platform sweeps.
 - Horizon 3 — This Month (Strategic): Analyze recurring client pain points across market_research_notes to productize into new Fiverr/Contra packages or blueprints.
 - Demand-Driven Asset Creation: Whenever github_lead_magnet_expansion is due (or repo has <3 templates), set "new_template_needed": true, select a template topic DIRECTLY from recurring buyer pain points in market_research_notes, supply complete workflow_json (real n8n nodes), realistic sample_test_run_md (2 payloads + traces), comprehensive readme_content, AND generate a ready-to-publish "linkedin_showcase_post" signed as "Mohamed Romih | MRomih Automations".
-- Human Escalation Gate: Set "human_action_required": true ONLY if a browser platform timer is due (including staged LinkedIn showcase post ready to publish when due), a deal follow-up has elapsed, or a high-intent client opportunity requires PC application. Otherwise set false with "Zero human intervention required".
+- Human Escalation Gate: Set "human_action_required": true ONLY if a browser platform timer is due, a staged LinkedIn post is ready to publish, a deal follow-up has elapsed, or a high-intent client opportunity requires PC application. Otherwise set false with "Zero human intervention required".
 - Identity & Sign-Offs: Always sign proposals, posts, and outreach strictly as "Mohamed Romih | MRomih Automations". Never use robotic AI self-titles.
 
 Respond strictly in valid JSON format:
@@ -1237,9 +1769,7 @@ Respond strictly in valid JSON format:
         horizon_1_today: governance.dueDeals.length > 0
           ? `Execute due follow-ups for: ${governance.dueDeals.map(d => d.company).join(', ')}.`
           : `Monitor inbox sentinels and phone sync updates; upcoming deal timers: ${governance.upcomingDeals.join(', ') || 'None due today'}.`,
-        horizon_2_this_week: funnel.replies_received === 0
-          ? `Diagnosed ${funnel.proposals_sent} pending proposals with 0 replies yet; reinforce authority via GitHub lead-magnet proof assets and LinkedIn showcase before due follow-up windows.`
-          : `Maintain momentum on ${funnel.replies_received} active reply thread(s) and execute scheduled Contra/LinkedIn platform sweeps.`,
+        horizon_2_this_week: pacing.bottleneck_prescription,
         horizon_3_this_month: `Productize recurring "${topPain}" buyer pain points into dedicated Fiverr/Contra turnkey blueprints targeting $45-$65/hr and $500-$1,500 fixed builds.`
       },
       new_research_note: {
@@ -1265,7 +1795,7 @@ Respond strictly in valid JSON format:
         : 'Zero human intervention required. All platform governance timers and background sentinels operating within window.',
       governance_timers_triggered: governance.dueBrowserSchedules.map(s => s.id),
       antigravity_prompt: null,
-      learned_insight: 'Phone-to-brain feedback loops combined with 3-horizon bottleneck audits keep outreach aligned with live revenue triggers.'
+      learned_insight: 'Phone-to-brain feedback loops combined with closed-loop query evolution keep outreach aligned with live revenue triggers.'
     };
   }
 
@@ -1278,7 +1808,6 @@ Respond strictly in valid JSON format:
     const slug = tmpl.slug.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
     console.log(`🔨 [Stage B: Simulation] Preparing template deliverable: ${tmpl.name} (${slug})...`);
 
-    // Ensure sample_test_run_md exists
     if (!tmpl.sample_test_run_md) {
       tmpl.sample_test_run_md = `# Sample Test Runs & Simulation Proof\n\n### Payload 1: Standard Sale Webhook\n\`\`\`json\n{\n  "event": "sale",\n  "buyer_email": "client@example.com",\n  "product_id": "prod_123",\n  "amount_cents": 4900\n}\n\`\`\`\n\n### Node Execution Trace 1\n1. Webhook Trigger: Received payload in 12ms.\n2. Crypto HMAC: Signature verified.\n3. Transform Node: Formatted record for CRM.\n4. Writeback Node: Record appended successfully (HTTP 200).\n`;
     }
@@ -1286,7 +1815,6 @@ Respond strictly in valid JSON format:
       tmpl.readme_content = `# ${tmpl.name}\n\n${tmpl.summary}\n\n## Architecture Overview\nProduction-ready n8n workflow designed by MRomih Automations.\n`;
     }
 
-    // Stage C: Adversarial Principal QA Critic
     console.log(`🧐 [Stage C: QA Critic] Running adversarial Principal QA Critic pass...`);
     let qaScore = 0;
     let revisions = 0;
@@ -1299,7 +1827,6 @@ Respond strictly in valid JSON format:
         break;
       }
 
-      // Re-prompt for revision
       revisions++;
       try {
         const revPrompt = `
@@ -1356,7 +1883,6 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
           memory.platform_schedules.github_lead_magnet_expansion.last_checked = new Date().toISOString();
         }
 
-        // Stage ready-to-publish LinkedIn showcase post for next linkedin_content_and_outreach window
         if (!Array.isArray(memory.staged_linkedin_posts)) memory.staged_linkedin_posts = [];
         const rawPost = analysis.linkedin_showcase_post;
         const postCopy = sanitizeClientCopy(
@@ -1391,11 +1917,17 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
 
   // STAGE D: Autonomous Error Management & Ledger Persistence
   if (analysis.new_research_note && analysis.new_research_note.topic) {
-    memory.market_research_notes.push({
-      timestamp: new Date().toISOString(),
-      ...analysis.new_research_note
-    });
-    if (memory.market_research_notes.length > 25) memory.market_research_notes = memory.market_research_notes.slice(-25);
+    const normNote = String(analysis.new_research_note.topic).trim().toLowerCase();
+    const hasDup = (memory.market_research_notes || []).some(
+      n => String(n.topic || '').trim().toLowerCase() === normNote
+    );
+    if (!hasDup) {
+      memory.market_research_notes.push({
+        timestamp: new Date().toISOString(),
+        ...analysis.new_research_note
+      });
+    }
+    if (memory.market_research_notes.length > 40) memory.market_research_notes = memory.market_research_notes.slice(-40);
   }
 
   if (analysis.roi_calculation && analysis.roi_calculation.opportunity) {
@@ -1427,6 +1959,9 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     if (memory.learned_rules.length > 25) memory.learned_rules = memory.learned_rules.slice(-25);
   }
 
+  // Closed-Loop Query Evolution & QA-Gated Targeting Upgrades -> playbook.json
+  const evolutionReport = await evolveAcquisitionTargeting(memory, playbook, telemetry, studyResult, pacing);
+
   // Weekly Knowledge Distillation Loop (QA Critic >= 9/10 gated -> playbook.json + GitHub Contents API)
   const distillationReport = await runWeeklyKnowledgeDistillation(memory, playbook, governance);
 
@@ -1443,6 +1978,10 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     hn_signals_scanned: hnHits.length,
     templates_in_lead_magnet: governance.repoTemplateCount,
     active_governance_schedules: Object.keys(governance.scheduleStatus).length,
+    active_dynamic_queries: (playbook.dynamic_search_queries || []).length,
+    north_star_pacing: pacing,
+    study_sources_scanned: studyResult.source_counts,
+    last_evolution_summary: evolutionReport.search_targeting_upgrades,
     conversion_funnel: memory.conversion_funnel,
     telegram_last_update_id: memory.telegram_last_update_id,
     playbook_discovered_patterns: (playbook.discovered_market_patterns || []).length
@@ -1456,7 +1995,6 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     return `• ${statusIcon} <b>${escapeHtml(s.name)}:</b> ${s.is_due ? 'DUE NOW' : 'Next: ' + nextDate} (every ${s.interval_days}d)`;
   }).join('\n');
 
-  const funnel = memory.conversion_funnel || { proposals_sent: 0, replies_received: 0, calls_booked: 0, deals_won: 0, total_revenue_usd: 0 };
   const horizons = analysis.three_horizon_assessment || {
     horizon_1_today: 'Monitor inbound leads and pending follow-up windows.',
     horizon_2_this_week: 'Execute due storefront sweeps and tighten proof-led conversion copy.',
@@ -1474,9 +2012,17 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
   }
 
   telegramMessage +=
-    `📈 <b>Conversion Funnel ($3,000/mo North Star):</b>\n` +
-    `• Sent: <b>${funnel.proposals_sent}</b> | Replies: <b>${funnel.replies_received}</b> | Calls: <b>${funnel.calls_booked}</b> | Won: <b>${funnel.deals_won}</b> | Rev: <b>$${funnel.total_revenue_usd} USD</b>\n\n` +
-    `📊 <b>Market & Deal Pipeline Synthesis:</b>\n` +
+    `📈 <b>$3,000/mo North Star Pacing &amp; Funnel:</b>\n` +
+    `• <b>Revenue:</b> <b>$${pacing.total_revenue_usd} / $${pacing.target_monthly_usd} USD</b> (Gap: <b>$${pacing.revenue_gap_usd} USD</b>)\n` +
+    `• <b>Funnel:</b> Sent <b>${pacing.proposals_sent}</b> | Replies <b>${pacing.replies_received}</b> (<b>${pacing.reply_rate_pct}%</b>) | Calls <b>${pacing.calls_booked}</b> (<b>${pacing.call_rate_pct}%</b>) | Won <b>${pacing.deals_won}</b> (<b>${pacing.win_rate_pct}%</b>)\n` +
+    `• <b>#1 Bottleneck:</b> <code>${escapeHtml(pacing.primary_bottleneck)}</code> — <i>${escapeHtml(pacing.bottleneck_prescription)}</i>\n\n` +
+    `🧠 <b>[BRAIN STUDY &amp; EVOLUTION ADVICE]</b>\n` +
+    `• <b>What I Learned Today:</b> ${escapeHtml(evolutionReport.what_i_learned_today)}\n` +
+    `• <b>Search Targeting Upgrades:</b> ${escapeHtml(evolutionReport.search_targeting_upgrades)}\n` +
+    `• <b>Recommended Founder Move:</b> ${escapeHtml(evolutionReport.recommended_founder_move)}` +
+    (stagedStudyPost ? `\n• <b>Inbound LinkedIn Post Staged:</b> "${escapeHtml(stagedStudyPost.title)}"` : '') +
+    `\n\n` +
+    `📊 <b>Market &amp; Deal Pipeline Synthesis:</b>\n` +
     `${escapeHtml(analysis.market_synthesis)}\n\n` +
     `🧭 <b>3-Horizon Strategic Assessment:</b>\n` +
     `• <b>Horizon 1 (Today):</b> ${escapeHtml(horizons.horizon_1_today)}\n` +
@@ -1488,7 +2034,7 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     `• <b>Decision:</b> <code>${escapeHtml(analysis.roi_calculation?.decision || 'STANDBY')}</code> — <i>${escapeHtml(analysis.roi_calculation?.rationale || '')}</i>\n\n` +
     `⏱️ <b>Platform Governance Schedules:</b>\n` +
     `${schedLines}\n\n` +
-    `🛠️ <b>Demand-Driven Builder & QA Gate:</b>\n` +
+    `🛠️ <b>Demand-Driven Builder &amp; QA Gate:</b>\n` +
     `${builderReport}\n\n` +
     `📚 <b>Weekly Knowledge Distillation (<code>playbook.json</code>):</b>\n` +
     `${distillationReport}\n\n` +
@@ -1501,15 +2047,30 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     analysis.human_action_required ||
     governance.dueBrowserSchedules.length > 0 ||
     governance.dueDeals.length > 0 ||
-    analysis.antigravity_prompt
+    analysis.antigravity_prompt ||
+    evolutionReport.targeting_upgraded ||
+    stagedStudyPost ||
+    pendingLinkedInPosts.length > 0
   );
 
   if (hasDueItems) {
-    const dueSummary = analysis.action_reason ||
-      [
-        ...governance.dueBrowserSchedules.map(s => s.name),
-        ...governance.dueDeals.map(d => `${d.company} follow-up`)
-      ].join(', ');
+    const actionableParts = [];
+    if (analysis.action_reason && !String(analysis.action_reason).toLowerCase().includes('zero human intervention')) {
+      actionableParts.push(analysis.action_reason);
+    }
+    if (governance.dueBrowserSchedules.length > 0) {
+      actionableParts.push(...governance.dueBrowserSchedules.map(s => s.name));
+    }
+    if (governance.dueDeals.length > 0) {
+      actionableParts.push(...governance.dueDeals.map(d => `${d.company} follow-up`));
+    }
+    if (evolutionReport.targeting_upgraded) {
+      actionableParts.push(`Playbook targeting evolved (${evolutionReport.search_targeting_upgrades})`);
+    }
+    if (stagedStudyPost || pendingLinkedInPosts.length > 0) {
+      actionableParts.push(`${pendingLinkedInPosts.length} LinkedIn teardown post(s) staged for publishing`);
+    }
+    const dueSummary = actionableParts.join(' | ') || 'Actionable growth or platform update ready.';
     telegramMessage +=
       `🚨 <b>HUMAN + ANTIGRAVITY ACTION REQUIRED:</b>\n` +
       `<b>Reason:</b> ${escapeHtml(dueSummary)}\n\n`;

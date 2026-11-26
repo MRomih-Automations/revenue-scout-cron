@@ -90,10 +90,16 @@ function loadPlaybook() {
   const pbPath = path.join(__dirname, 'playbook.json');
   if (fs.existsSync(pbPath)) {
     try {
-      return JSON.parse(fs.readFileSync(pbPath, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(pbPath, 'utf8'));
+      if (!Array.isArray(parsed.dynamic_search_queries)) parsed.dynamic_search_queries = [];
+      if (!Array.isArray(parsed.winning_pitch_rules)) parsed.winning_pitch_rules = [];
+      if (!Array.isArray(parsed.discovered_market_patterns)) parsed.discovered_market_patterns = [];
+      return parsed;
     } catch (e) {
       console.warn('[Scout] Error reading playbook.json:', e.message);
       return {
+        dynamic_search_queries: [],
+        winning_pitch_rules: [],
         offer_ladder: {},
         vertical_playbooks: {},
         objection_handlers: {},
@@ -104,6 +110,8 @@ function loadPlaybook() {
     }
   }
   return {
+    dynamic_search_queries: [],
+    winning_pitch_rules: [],
     offer_ladder: {},
     vertical_playbooks: {},
     objection_handlers: {},
@@ -122,7 +130,7 @@ function loadLocalTelemetry() {
       console.warn('[Scout] Error reading local telemetry.json:', e.message);
     }
   }
-  return { seen_n8n_topics: [], seen_lead_ids: [] };
+  return { seen_n8n_topics: [], seen_lead_ids: [], query_stats: {} };
 }
 
 function validateScoutSchemas(memory, playbook) {
@@ -132,6 +140,8 @@ function validateScoutSchemas(memory, playbook) {
   if (!Array.isArray(memory.active_deal_pipeline)) errors.push('brain_memory.json active_deal_pipeline must be an array');
 
   if (playbook._parseError) errors.push(playbook._parseError);
+  if (!Array.isArray(playbook.dynamic_search_queries)) errors.push('playbook.json dynamic_search_queries must be an array');
+  if (!Array.isArray(playbook.winning_pitch_rules)) errors.push('playbook.json winning_pitch_rules must be an array');
   if (!playbook.offer_ladder || Object.keys(playbook.offer_ladder).length === 0) errors.push('playbook.json missing offer_ladder tiers');
   if (!playbook.vertical_playbooks || Object.keys(playbook.vertical_playbooks).length === 0) errors.push('playbook.json missing vertical_playbooks');
   if (!Array.isArray(playbook.discovered_market_patterns)) errors.push('playbook.json discovered_market_patterns must be an array');
@@ -140,12 +150,73 @@ function validateScoutSchemas(memory, playbook) {
 
 function formatPlaybookContext(playbook) {
   return JSON.stringify({
+    winning_pitch_rules: playbook.winning_pitch_rules || [],
+    dynamic_search_queries: (playbook.dynamic_search_queries || []).map(q => q.query),
     offer_ladder: playbook.offer_ladder || {},
     vertical_playbooks: playbook.vertical_playbooks || {},
     competitive_positioning: playbook.competitive_positioning || {},
     objection_handlers: playbook.objection_handlers || {},
     discovered_market_patterns: (playbook.discovered_market_patterns || []).slice(-5)
   }, null, 2);
+}
+
+function initQueryStats(playbook, telemetry) {
+  const stats = {};
+  const existingMap = (telemetry && telemetry.query_stats && typeof telemetry.query_stats === 'object')
+    ? telemetry.query_stats
+    : {};
+  for (const item of (playbook?.dynamic_search_queries || [])) {
+    if (!item || !item.query) continue;
+    const prev = existingMap[item.query] || {};
+    stats[item.query] = {
+      query: item.query,
+      hits: Math.max(Number(item.hits) || 0, Number(prev.hits) || 0),
+      qualified_leads: Math.max(Number(item.qualified_leads) || 0, Number(prev.qualified_leads) || 0),
+      zero_hit_runs: Math.max(Number(item.zero_hit_runs) || 0, Number(prev.zero_hit_runs) || 0),
+      run_hits: 0,
+      run_qualified: 0
+    };
+  }
+  return stats;
+}
+
+function doesTextMatchDynamicQuery(text, query) {
+  if (!text || !query) return false;
+  const lower = String(text).toLowerCase();
+  const stopWords = new Set(['or', 'and', 'the', 'for', 'with', 'mode']);
+  const tokens = String(query)
+    .toLowerCase()
+    .replace(/["'()]/g, ' ')
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length >= 3 && !stopWords.has(t));
+  if (tokens.length === 0) return false;
+  let matches = 0;
+  for (const tok of tokens) {
+    if (lower.includes(tok)) matches++;
+  }
+  return matches >= Math.min(2, tokens.length);
+}
+
+function finalizeQueryStats(queryStats) {
+  const out = {};
+  const nowIso = new Date().toISOString();
+  for (const [qKey, entry] of Object.entries(queryStats || {})) {
+    const runHits = Number(entry.run_hits) || 0;
+    const runQualified = Number(entry.run_qualified) || 0;
+    const prevHits = Number(entry.hits) || 0;
+    const prevQualified = Number(entry.qualified_leads) || 0;
+    const prevZero = Number(entry.zero_hit_runs) || 0;
+
+    out[qKey] = {
+      query: entry.query || qKey,
+      hits: prevHits + runHits,
+      qualified_leads: prevQualified + runQualified,
+      zero_hit_runs: runHits === 0 ? prevZero + 1 : 0,
+      last_run_at: nowIso
+    };
+  }
+  return out;
 }
 
 function getTrackedTopicIds(memory) {
@@ -286,7 +357,7 @@ async function callGemini(prompt) {
   throw new Error('All Gemini API models failed in Scout.');
 }
 
-async function updateLiveTelemetry(metrics, seenN8nTopics, seenLeadIds) {
+async function updateLiveTelemetry(metrics, seenN8nTopics, seenLeadIds, queryStats) {
   const token = GH_PAT || process.env.GITHUB_TOKEN;
   if (!token) {
     console.log('[Telemetry] Missing GH_PAT and GITHUB_TOKEN, skipping repository telemetry push.');
@@ -325,6 +396,28 @@ async function updateLiveTelemetry(metrics, seenN8nTopics, seenLeadIds) {
     const mergedSeen = Array.from(new Set([...existingSeen, ...(seenN8nTopics || [])])).slice(-100);
     const mergedLeadIds = Array.from(new Set([...existingLeadIds, ...Array.from(seenLeadIds || [])])).slice(-300);
 
+    let mergedQueryStats = existingData.query_stats && typeof existingData.query_stats === 'object'
+      ? { ...existingData.query_stats }
+      : {};
+    if (queryStats && typeof queryStats === 'object') {
+      const remoteStats = existingData.query_stats && typeof existingData.query_stats === 'object'
+        ? existingData.query_stats
+        : {};
+      const combined = {};
+      for (const [qKey, entry] of Object.entries(queryStats)) {
+        const remote = remoteStats[qKey] || {};
+        combined[qKey] = {
+          query: entry.query || qKey,
+          hits: Math.max(Number(entry.hits) || 0, Number(remote.hits) || 0),
+          qualified_leads: Math.max(Number(entry.qualified_leads) || 0, Number(remote.qualified_leads) || 0),
+          zero_hit_runs: Math.max(Number(entry.zero_hit_runs) || 0, Number(remote.zero_hit_runs) || 0),
+          run_hits: Number(entry.run_hits) || 0,
+          run_qualified: Number(entry.run_qualified) || 0
+        };
+      }
+      mergedQueryStats = finalizeQueryStats(combined);
+    }
+
     const payload = {
       ...existingData,
       status: 'HEALTHY',
@@ -338,7 +431,8 @@ async function updateLiveTelemetry(metrics, seenN8nTopics, seenLeadIds) {
       hn_scanned_hits: metrics.hn_scanned_hits || 0,
       reddit_scanned_posts: metrics.reddit_scanned_posts || 0,
       seen_n8n_topics: mergedSeen,
-      seen_lead_ids: mergedLeadIds
+      seen_lead_ids: mergedLeadIds,
+      query_stats: mergedQueryStats
     };
 
     const jsonStr = JSON.stringify(payload, null, 2);
@@ -639,58 +733,123 @@ Output JSON:
   }
 }
 
-async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds) {
-  console.log('[CloudScout] Scanning n8n Community Jobs category...');
+function isCommercialN8nTopic(t, feedKind = 'jobs') {
+  if (!t || !t.title) return false;
+  if (t.id === 941 || t.pinned === true) return false;
+  const lower = t.title.toLowerCase();
+  if (lower.includes('guidelines') || lower.includes('about the jobs category')) return false;
+  if (
+    lower.includes('looking for small') ||
+    lower.includes('looking for n8n') ||
+    lower.includes('looking for projects') ||
+    lower.includes('available for hire') ||
+    lower.includes('for hire') ||
+    /\b(unpaid|commission-based|commission only|commission-only|equity only|equity-only|pre-revenue|pre revenue)\b/i.test(lower)
+  ) {
+    return false;
+  }
+  if (feedKind === 'jobs') return true;
+
+  // High-intent triggers inside /latest.json (hiring, agency partners, Zapier/Make bill-shock migrations, queue mode, broken webhooks/CRM)
+  return (
+    /(\[\s*hiring\s*\]|\bhiring\b|\bseeking (?:a |an )?(?:freelancer|contractor|developer|engineer|expert|partner)\b|\blooking to hire\b|\bagency partner\b)/i.test(lower) ||
+    (/\b(zapier|make\.com|integromat)\b/i.test(lower) && /\b(migrat|switch|move|cost|bill|pricing|expensive|alternative|replacing)\b/i.test(lower)) ||
+    /\b(queue mode|redis worker|self[- ]hosted scale|webhook fail|silent fail|idempoten|duplicate record|duplicate row|broken workflow|production error)\b/i.test(lower)
+  );
+}
+
+function isCommercialHnHit(hit) {
+  if (!hit || !hit.objectID) return false;
+  const storyTitle = String(hit.story_title || '');
+  const rawBody = String(hit.comment_text || hit.story_text || hit.title || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const combined = `${storyTitle} ${rawBody}`;
+  const lower = combined.toLowerCase();
+
+  // Reject [For Hire] / "Who wants to be hired?" / unpaid asks
+  if (
+    /who wants to be hired/i.test(storyTitle) ||
+    /^\s*(\[?\s*for hire\s*\]?|available for hire|seeking work)\b/i.test(rawBody) ||
+    /\b(unpaid|equity only|commission only)\b/i.test(lower)
+  ) {
+    return false;
+  }
+
+  const isWhoIsHiringThread = /who is hiring|who's hiring|seeking freelancer|freelancer\?/i.test(storyTitle);
+  const hasCommercialIntent =
+    /\b(freelancer wanted|seeking freelancer|seeking contractor|looking to hire|agency partner|white-label|white label|contractor|freelance|consultant|need help migrating|bill shock|looking for (?:a |an )?(?:freelancer|contractor|developer|engineer|partner))\b/i.test(lower) ||
+    (isWhoIsHiringThread && /\b(freelance|contract|contractor|remote|agency|partner|n8n|make|zapier|webhook|ai agent|automation)\b/i.test(lower)) ||
+    (/\b(zapier|make\.com)\b/i.test(lower) && /\b(migrat|n8n|expensive|bill|cost)\b/i.test(lower)) ||
+    /\b(broken webhook|webhook idempotency|queue mode|silent failure)\b/i.test(lower);
+
+  if (!hasCommercialIntent) return false;
+
+  const hasTechFit = /\b(n8n|make\.com|zapier|webhook|api integration|idempoten|airtable|hubspot|crm|web scrap|python scrap|data extraction|ai agent|lead triage|voice agent|automation|playwright)\b/i.test(lower);
+  if (!hasTechFit) return false;
+
+  if (/apply at linkedin\.com\/jobs/i.test(lower) && !/\b(freelance|contract|contractor|partner)\b/i.test(lower)) {
+    return false;
+  }
+  return true;
+}
+
+async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds, queryStats) {
+  console.log('[CloudScout] Scanning n8n Community (/c/jobs/18.json, /c/jobs/13.json, /latest.json)...');
   const appliedTopicIds = getTrackedTopicIds(memory);
   const playbookContext = formatPlaybookContext(playbook || {});
+  const dynamicQueries = (playbook?.dynamic_search_queries || []).map(q => q.query).filter(Boolean);
+
+  const n8nFeeds = [
+    { kind: 'jobs', url: 'https://community.n8n.io/c/jobs/18.json' },
+    { kind: 'jobs', url: 'https://community.n8n.io/c/jobs/13.json' },
+    { kind: 'latest', url: 'https://community.n8n.io/latest.json' }
+  ];
+
+  const candidateTopics = [];
+  const seenFeedIds = new Set();
+
+  for (const feed of n8nFeeds) {
+    try {
+      const res = await fetch(feed.url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MRomih-Scout/2.0' },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!res.ok) {
+        console.warn(`[n8n Community] Feed ${feed.url} returned HTTP ${res.status}; continuing gracefully.`);
+        continue;
+      }
+      const data = await res.json();
+      const topics = data?.topic_list?.topics || [];
+      metrics.issues_scanned += topics.length;
+      for (const topic of topics) {
+        if (!topic || !topic.id || seenFeedIds.has(topic.id)) continue;
+        seenFeedIds.add(topic.id);
+        candidateTopics.push({ topic, kind: feed.kind });
+      }
+    } catch (err) {
+      console.warn(`[n8n Community] Feed error (${feed.url}):`, err.message);
+    }
+  }
+
+  const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
 
   try {
-    const res = await fetch('https://community.n8n.io/c/jobs/13.json', {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MRomih-Scout/2.0' }
-    });
-    if (!res.ok) return;
-
-    const data = await res.json();
-    const topics = data?.topic_list?.topics || [];
-    metrics.issues_scanned += topics.length;
-
-    const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-
-    function isGenuineN8nJob(t) {
-      if (!t || !t.title) return false;
-      if (t.id === 941 || t.pinned === true) return false;
-      const lower = t.title.toLowerCase();
-      if (lower.includes('guidelines') || lower.includes('about the jobs category')) return false;
-      if (
-        lower.includes('looking for small') ||
-        lower.includes('looking for n8n') ||
-        lower.includes('looking for projects') ||
-        lower.includes('available for hire') ||
-        lower.includes('for hire') ||
-        /\b(unpaid|commission-based|commission only|commission-only|equity only|equity-only|pre-revenue|pre revenue)\b/i.test(lower)
-      ) {
-        return false;
-      }
-      return true;
-    }
-
-    for (const topic of topics) {
-      if (!isGenuineN8nJob(topic)) continue;
+    for (const { topic, kind } of candidateTopics) {
+      if (!isCommercialN8nTopic(topic, kind)) continue;
 
       const createdTime = new Date(topic.created_at).getTime();
       if (createdTime < fourteenDaysAgo) continue;
 
-      // Skip if seen in current session, telemetry lead history, or already applied in memory pipeline
       const n8nLeadId = `n8n_${topic.id}`;
       if (seenN8nTopics.has(topic.id) || appliedTopicIds.has(topic.id) || (seenLeadIds && seenLeadIds.has(n8nLeadId))) {
         continue;
       }
 
-      // 1. Fetch full topic body from Discourse API
+      // Fetch full topic body from Discourse API
       let fullTopic = null;
       try {
         const topicRes = await fetch(`https://community.n8n.io/t/${topic.id}.json`, {
-          headers: { 'User-Agent': 'Mozilla/5.0 MRomih-Scout/2.0' }
+          headers: { 'User-Agent': 'Mozilla/5.0 MRomih-Scout/2.0' },
+          signal: AbortSignal.timeout(10000)
         });
         if (topicRes.ok) {
           fullTopic = await topicRes.json();
@@ -700,49 +859,39 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, se
       }
 
       if (!fullTopic) continue;
-
-      // Skip explicitly archived topics or topics marked closed/filled in title or first post
-      if (fullTopic.archived === true) {
-        console.log(`[n8n Community] Skipping archived topic #${topic.id}`);
-        continue;
-      }
-      if (/\[(closed|filled|expired|hired)\]/i.test(fullTopic.title)) {
-        console.log(`[n8n Community] Skipping filled/closed topic title #${topic.id}`);
-        continue;
-      }
+      if (fullTopic.archived === true) continue;
+      if (/\[(closed|filled|expired|hired)\]/i.test(fullTopic.title)) continue;
 
       const firstPost = fullTopic.post_stream?.posts?.[0];
       const rawHtml = firstPost?.cooked || '';
       const textContent = rawHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
       const badTermsRegex = /\b(unpaid|commission-based|commission only|commission-only|equity only|equity-only|pre-revenue|pre revenue)\b/i;
-      if (badTermsRegex.test(fullTopic.title) || badTermsRegex.test(textContent)) {
-        console.log(`[n8n Community] Skipping unpaid/commission/pre-revenue topic #${topic.id}`);
-        continue;
-      }
-
-      if (/position (?:has been )?filled|no longer accepting|closed for applications/i.test(textContent)) {
-        console.log(`[n8n Community] Skipping filled post body in #${topic.id}`);
-        continue;
-      }
+      if (badTermsRegex.test(fullTopic.title) || badTermsRegex.test(textContent)) continue;
+      if (/position (?:has been )?filled|no longer accepting|closed for applications/i.test(textContent)) continue;
 
       seenN8nTopics.add(topic.id);
-      metrics.bounties_found++;
-      metrics.last_bounty = `n8n Job: ${topic.title.substring(0, 35)}...`;
-      console.log('[n8n Community] High-intent opportunity discovered: #' + topic.id + ' - ' + topic.title);
+      if (seenLeadIds) seenLeadIds.add(n8nLeadId);
+
+      // Attribute dynamic query hit telemetry cleanly
+      const combinedText = `${topic.title} ${textContent}`;
+      const matchedQueries = dynamicQueries.filter(q => doesTextMatchDynamicQuery(combinedText, q));
+      for (const mq of matchedQueries) {
+        if (queryStats && queryStats[mq]) queryStats[mq].run_hits++;
+      }
 
       const topicUrl = `https://community.n8n.io/t/${topic.slug || topic.id}/${topic.id}`;
       const authorUsername = firstPost?.username || 'the poster';
+      const hasBrokenHistory = /broken|failed|unreliable|previous freelancer|frustrat|silent fail|duplicate|idempoten|429/i.test(combinedText);
+      const isMigrationOrQueue = /\b(zapier|make\.com|integromat|queue mode|bill|cost)\b/i.test(combinedText);
 
-      // 2. Perform Complete Technical Requirement Study, Playbook Classification, Workflow Architecture Plan, ROI & Application in Cloud via Gemini
-      const hasBrokenHistory = /broken|failed|unreliable|previous freelancer|frustrat|silent fail|duplicate/i.test(textContent);
       let study = null;
       try {
         const aiPrompt = `
 You are the Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
-Perform a comprehensive technical study, Commercial Playbook matching, architecture design, and proposal drafting for this live client request:
+Score (0-100) and perform a comprehensive technical study, Commercial Playbook matching, architecture design, and proposal drafting for this n8n Community opportunity:
 
-Platform: Official n8n Community (Jobs)
+Platform: Official n8n Community (${kind === 'jobs' ? 'Jobs' : 'Latest Commercial Trigger'})
 Topic ID: #${topic.id}
 Title: ${topic.title}
 Author: ${authorUsername}
@@ -750,37 +899,33 @@ URL: ${topicUrl}
 Full Post Text:
 ${textContent.substring(0, 2500)}
 
-Commercial & Technical Playbook (playbook.json):
+Commercial & Technical Playbook (playbook.json, including winning_pitch_rules):
 ${playbookContext}
 
 Playbook Execution Mandates:
-1. Classify this lead into the closest vertical key in vertical_playbooks ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
-2. Select the highest-converting offer tier from offer_ladder ("diagnostic_audit", "production_pipeline", or "enterprise_ai_system"). CRITICAL: If the client mentions past broken automations, silent failures, or unreliable freelancers, pitch the "$150 fixed (48h) Credited Diagnostic Audit" alongside the full build tier!
-3. Weave that vertical's exact technical hooks (architecture_solution + roi_metrics) into proposed_copy.
-
-Agency Context & Operating Rules:
-- Core Capabilities: Enterprise n8n workflows, HMAC SHA-256 verification, transaction-ID idempotency, dead-letter error sub-workflows, CRM synchronization (HubSpot, Airtable, QuickBooks, PostgreSQL), AI lead triage, Python scraping.
-- Pricing Rules: Never undersell high-budget engineering roles with $35 debug pricing. Use offer_ladder tiers ($150 credited audit, $500-$850 production pipeline, or $1,200-$2,500+ / $45-$65/hr enterprise retainer).
-- Identity & Sign-Off Mandate: All proposals, messages, and copy must strictly be signed as "Mohamed Romih | MRomih Automations" (Founder / Principal Automation Architect). Strictly forbid robotic AI self-titles (never write "Autonomous Chief Operating Officer", "Autonomous COO", "AI Assistant", etc.).
-- Public Proofs:
-  * Open-Source Lead Magnet: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit
-  * Contra Portfolio: https://contra.com/mohamed_romih_jj5w3q2x
-- Platform Constraint: Discourse brand-new accounts (TL0) have hidden-profile DMs locked, and topic public replies are closed. If an external link (Airtable form / email) is provided in the post, use it. Otherwise, look up author/founder on LinkedIn.
+1. Assign "fit_score" (0-100): Score >= 75 ONLY for legitimate paid hiring/partner opportunities, Zapier/Make bill-shock migrations, queue-mode scaling needs, or broken production webhooks/CRMs. Score < 75 for hobby questions, beginner tutorials, or low-value noise.
+2. Classify into closest vertical key ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
+3. Apply winning_pitch_rules from playbook.json: if broken webhooks, unreliable past freelancers, or Zapier/Make bill-shock appear, lead with our "$150 fixed (48h) Credited Diagnostic Audit" alongside the full build tier!
+4. Sign proposed_copy strictly as "Mohamed Romih | MRomih Automations". Strictly forbid robotic AI self-titles ("Autonomous COO", "AI Assistant", etc.).
+5. Public proofs: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and https://contra.com/mohamed_romih_jj5w3q2x
 
 Output strictly valid JSON:
 {
+  "fit_score": 0-100,
+  "score_rationale": "1 concise sentence explaining why fit_score was assigned",
   "matched_vertical": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines",
   "recommended_offer_tier": "diagnostic_audit | production_pipeline | enterprise_ai_system",
-  "technical_study": "3-4 sentences breaking down client requirements, integration endpoints, data schema, and security/rate-limit considerations.",
-  "workflow_architecture": "Step-by-step n8n node topology (e.g. 1. Webhook trigger -> 2. Crypto HMAC validation -> 3. Code node transform -> 4. Target API / Airtable upsert -> 5. Sub-workflow dead-letter error trigger).",
-  "calculated_roi": "Offer tier | Estimated project value ($X USD) | Target rate ($45-$65/hr or fixed) | ROI justification anchored to vertical metrics",
-  "proposed_copy": "Polished, engineering-first proposal copy weaving vertical hooks + credited $150 Diagnostic Audit if burned by past devs, signed 'Mohamed Romih | MRomih Automations'.",
-  "antigravity_prompt": "Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine... (complete step-by-step instructions for Antigravity on PC to open the exact browser URL or form, paste the pre-written proposal, update AGENT_HANDOVER.md, and commit)."
+  "technical_study": "3-4 sentences breaking down client requirements, integration endpoints, and security/rate-limit considerations.",
+  "workflow_architecture": "Step-by-step n8n node topology (e.g. 1. Webhook trigger -> 2. Crypto HMAC validation -> 3. Idempotency check -> 4. CRM upsert -> 5. Dead-letter error trigger).",
+  "calculated_roi": "Offer tier | Estimated project value ($X USD) | Target rate ($45-$65/hr or fixed) | ROI justification",
+  "proposed_copy": "Polished, engineering-first proposal weaving vertical hooks + credited $150 Diagnostic Audit if applicable, signed 'Mohamed Romih | MRomih Automations'.",
+  "antigravity_prompt": "Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${topicUrl} in Chrome and outreach cleanly..."
 }`;
 
         const rawAi = await callGemini(aiPrompt);
         study = safeJsonParse(rawAi);
-        if (!study) {
+        if (!study || typeof study.fit_score === 'undefined') {
+          const scoreMatch = rawAi.match(/"fit_score"\s*:\s*(\d+)/i);
           const vertMatch = rawAi.match(/"matched_vertical"\s*:\s*"([^"]+)"/i);
           const tierMatch = rawAi.match(/"recommended_offer_tier"\s*:\s*"([^"]+)"/i);
           const techMatch = rawAi.match(/"technical_study"\s*:\s*"([\s\S]*?)(?=",\s*"workflow_architecture")/i);
@@ -790,6 +935,8 @@ Output strictly valid JSON:
           const promptMatch = rawAi.match(/"antigravity_prompt"\s*:\s*"([\s\S]*?)(?="\s*\}|\s*$)/i);
           if (techMatch && copyMatch) {
             study = {
+              fit_score: scoreMatch ? Number(scoreMatch[1]) : (kind === 'jobs' || hasBrokenHistory || isMigrationOrQueue ? 80 : 70),
+              score_rationale: 'Extracted structured study from Gemini response.',
               matched_vertical: vertMatch ? vertMatch[1] : 'b2b_gtm_and_lead_triage',
               recommended_offer_tier: tierMatch ? tierMatch[1] : (hasBrokenHistory ? 'diagnostic_audit' : 'production_pipeline'),
               technical_study: techMatch[1].replace(/\\n/g, '\n').trim(),
@@ -804,34 +951,48 @@ Output strictly valid JSON:
         }
       } catch (err) {
         console.warn('[n8n Community] AI study fallback:', err.message);
-        const fallbackTier = hasBrokenHistory ? 'diagnostic_audit + production_pipeline' : 'production_pipeline';
-        const auditPitch = hasBrokenHistory
+        const fallbackScore = (kind === 'jobs' || hasBrokenHistory || isMigrationOrQueue) ? 80 : 68;
+        const fallbackTier = (hasBrokenHistory || isMigrationOrQueue) ? 'diagnostic_audit' : 'production_pipeline';
+        const auditPitch = (hasBrokenHistory || isMigrationOrQueue)
           ? '\n\nIf you want zero-risk proof before committing to the full build, we can kick off with a $150 48-hour Diagnostic Audit (100% credited toward the final implementation).'
           : '';
         study = {
-          matched_vertical: /gumroad|stripe|shopify|airtable/i.test(textContent) ? 'ecommerce_and_creators' : 'b2b_gtm_and_lead_triage',
+          fit_score: fallbackScore,
+          score_rationale: 'Heuristic trigger qualification for hiring/migration/broken-webhook thread.',
+          matched_vertical: /gumroad|stripe|shopify|airtable/i.test(combinedText) ? 'ecommerce_and_creators' : 'b2b_gtm_and_lead_triage',
           recommended_offer_tier: fallbackTier,
           technical_study: `Client requires production n8n automation for: ${topic.title}. Focus on reliable HMAC verification, idempotency, and dead-letter error routing.`,
           workflow_architecture: '1. Webhook Trigger + HMAC Gate -> 2. Transaction ID Idempotency Lookup -> 3. Normalized Upsert -> 4. Enterprise Error Dead-Letter Sub-workflow.',
           calculated_roi: `Offer Tier: ${fallbackTier} | $500–$850 fixed or $45/hr target | Zero duplicate rows & silent drops.`,
           proposed_copy: `Hi,\n\nI reviewed your project requirements for "${topic.title}". At MRomih Automations, we build production n8n pipelines with HMAC SHA-256 webhook gates, transaction-ID idempotency (preventing duplicate rows), and dead-letter error alerting so nothing fails silently.${auditPitch}\n\nYou can inspect an open-source sample of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur portfolio and case studies:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nTarget Rate: $45/hr (or $500–$850 turnkey build).\nGlad to hop on a quick 15-minute call.\n\nBest regards,\nMohamed Romih | MRomih Automations`,
-          antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${topicUrl} in the browser. Submit the pre-written proposal via the external application link, direct message, or LinkedIn founder outreach. Log the outreach in AGENT_HANDOVER.md and push to origin main.`
+          antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${topicUrl} in Chrome. Submit the pre-written proposal via external link, DM, or LinkedIn founder outreach. Log the outreach in AGENT_HANDOVER.md and push to origin main.`
         };
       }
 
-      // 3. Format and Send Telegram Opportunity Alert
+      const fitScore = Number(study.fit_score) || 0;
+      if (fitScore < 75) {
+        console.log(`[n8n Community] Skipped low-fit topic #${topic.id} (score=${fitScore}/100): ${study.score_rationale || ''}`);
+        continue;
+      }
+
+      metrics.bounties_found++;
+      metrics.last_bounty = `n8n Community #${topic.id}: ${topic.title.substring(0, 32)}...`;
+      for (const mq of matchedQueries) {
+        if (queryStats && queryStats[mq]) queryStats[mq].run_qualified++;
+      }
+
       const alertMsg =
-        `🟡 <b>[OPPORTUNITY — READY FOR ANTIGRAVITY]</b>\n` +
-        `<b>Live n8n Community Client Opportunity</b>\n\n` +
+        `🟡 <b>[PRE-VETTED OPPORTUNITY — SCORE ${fitScore}/100]</b>\n` +
+        `<b>n8n Community Client Lead (${kind === 'jobs' ? 'Jobs' : 'Migration / Audit Trigger'})</b>\n\n` +
         `📋 <b>Title:</b> ${escapeHtml(topic.title)}\n` +
         `👤 <b>Author:</b> <code>@${escapeHtml(authorUsername)}</code> | <b>Date:</b> ${topic.created_at.split('T')[0]}\n` +
         `🎯 <b>Playbook Match:</b> <code>${escapeHtml(study.matched_vertical || 'custom')}</code> | <b>Offer Tier:</b> <code>${escapeHtml(study.recommended_offer_tier || 'production_pipeline')}</code>\n` +
         `🔗 <b>URL:</b> <a href="${topicUrl}">View Post on n8n Community</a>\n\n` +
-        `🔬 <b>Technical Requirement Study:</b>\n` +
-        `${escapeHtml(study.technical_study)}\n\n` +
+        `🔬 <b>Technical Study &amp; Score Rationale:</b>\n` +
+        `${escapeHtml(study.technical_study)}\n<i>Score rationale: ${escapeHtml(study.score_rationale || '')}</i>\n\n` +
         `🛠️ <b>n8n Workflow Architecture Plan:</b>\n` +
         `${escapeHtml(study.workflow_architecture)}\n\n` +
-        `📊 <b>Calculated ROI & Rate:</b>\n` +
+        `📊 <b>Calculated ROI &amp; Rate:</b>\n` +
         `${escapeHtml(study.calculated_roi)}\n\n` +
         `📝 <b>Pre-Drafted Tailored Proposal:</b>\n` +
         `<blockquote>${escapeHtml(study.proposed_copy)}</blockquote>\n\n` +
@@ -840,25 +1001,45 @@ Output strictly valid JSON:
         `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>\n` +
         ACTIONABLE_ROUTING_BANNER;
 
-      if (seenLeadIds) seenLeadIds.add(`n8n_${topic.id}`);
       await sendTelegram(alertMsg);
-      console.log(`[n8n Community] Dispatched pre-analyzed Antigravity opportunity for #${topic.id}`);
+      console.log(`[n8n Community] Dispatched pre-vetted opportunity #${topic.id} (score=${fitScore}/100).`);
     }
   } catch (err) {
     console.error('[n8n Community] Scan error:', err.message);
   }
 }
 
-async function scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds) {
-  console.log('[CloudScout] Scanning Hacker News Algolia API for automation & scraping opportunities...');
-  const queries = ['n8n', 'web+scraping+automation'];
+async function scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds, queryStats) {
+  console.log('[CloudScout] Scanning Hacker News Algolia API (core + dynamic playbook queries)...');
+  const coreQueries = ['n8n', 'web scraping automation', 'Ask HN: Who is hiring freelance'];
+  const dynamicList = (playbook?.dynamic_search_queries || []).map(q => q.query).filter(Boolean);
+  const queryPlan = [];
+  const seenQueryStrings = new Set();
+
+  for (const q of coreQueries) {
+    if (!seenQueryStrings.has(q)) {
+      seenQueryStrings.add(q);
+      queryPlan.push({ query: q, isDynamic: dynamicList.includes(q) });
+    }
+  }
+  for (const q of dynamicList) {
+    if (!seenQueryStrings.has(q)) {
+      seenQueryStrings.add(q);
+      queryPlan.push({ query: q, isDynamic: true });
+    }
+  }
+
   metrics.hn_scanned_hits = 0;
   const playbookContext = formatPlaybookContext(playbook || {});
+  const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
 
-  for (const q of queries) {
+  for (const qItem of queryPlan) {
     try {
-      const url = `https://hn.algolia.com/api/v1/search_by_date?query=${q}&tags=(story,comment)&hitsPerPage=20`;
-      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 MRomih-Scout/2.0' } });
+      const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(qItem.query)}&tags=(story,comment)&hitsPerPage=15`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 MRomih-Scout/2.0' },
+        signal: AbortSignal.timeout(10000)
+      });
       if (!res.ok) continue;
 
       const data = await res.json();
@@ -866,97 +1047,114 @@ async function scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds)
       metrics.issues_scanned += hits.length;
       metrics.hn_scanned_hits += hits.length;
 
-      const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const recentHits = hits.filter(h => h && h.objectID && new Date(h.created_at).getTime() >= fourteenDaysAgo);
+      if (qItem.isDynamic && queryStats && queryStats[qItem.query] && recentHits.length > 0) {
+        queryStats[qItem.query].run_hits += recentHits.length;
+      }
 
-      for (const hit of hits) {
+      for (const hit of recentHits) {
         const hnLeadId = `hn_${hit.objectID}`;
-        if (!hit.objectID || seenHnIds.has(hit.objectID) || (seenLeadIds && seenLeadIds.has(hnLeadId))) continue;
-        const createdAt = new Date(hit.created_at).getTime();
-        if (createdAt < oneWeekAgo) continue;
-
-        const text = (hit.comment_text || hit.story_text || hit.title || '').toLowerCase();
-        
-        // Filter strictly for explicit commercial hiring/freelance posts
-        const isExplicitHiring = 
-          /\b(who is hiring|who's hiring|freelancer wanted|seeking freelancer|seeking contractor)\b/i.test(text) ||
-          (/\b(hiring|looking to hire|need a freelancer|need a contractor|looking for a freelancer|looking for a contractor)\b/i.test(text) &&
-           /\b(n8n|web scraper|python scraper|data extraction|automation engineer|automation developer)\b/i.test(text));
-
-        if (!isExplicitHiring) continue;
-
-        // Skip obvious spam or off-topic job board advertisements
-        if (/we are hiring|join our team at bigtech|apply at linkedin\.com\/jobs/i.test(text)) continue;
+        if (seenHnIds.has(hit.objectID) || (seenLeadIds && seenLeadIds.has(hnLeadId))) continue;
+        if (!isCommercialHnHit(hit)) continue;
 
         seenHnIds.add(hit.objectID);
-        metrics.bounties_found++;
-        metrics.last_bounty = `HN Lead: ${hit.author || 'User'} (${q})`;
-        console.log(`[HackerNews] Opportunity identified: ${hit.objectID} by ${hit.author}`);
+        if (seenLeadIds) seenLeadIds.add(hnLeadId);
 
+        const rawText = String(hit.comment_text || hit.story_text || hit.title || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const storyTitle = String(hit.story_title || hit.title || '');
         const hnUrl = `https://news.ycombinator.com/item?id=${hit.objectID}`;
 
         let study = null;
         try {
           const aiPrompt = `
 You are the Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
-Analyze this Hacker News automation/scraping opportunity using our Commercial & Technical Playbook:
-Author: ${hit.author}
-Query: ${q}
+Score (0-100) and analyze this Hacker News opportunity (story or Who-is-Hiring comment) using our Commercial Playbook & winning_pitch_rules:
+
+Query: ${qItem.query}
+Thread Title: ${storyTitle}
+Author: ${hit.author || 'hn_user'}
 URL: ${hnUrl}
 Snippet:
-${(hit.comment_text || hit.story_text || hit.title || '').substring(0, 1500)}
+${rawText.substring(0, 1800)}
 
-Commercial Playbook (playbook.json):
+Commercial & Technical Playbook (playbook.json):
 ${playbookContext}
 
 Mandates:
-1. Classify into the closest vertical key in vertical_playbooks ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
-2. Select the highest-converting offer_ladder tier (pitching the $150 48h Credited Diagnostic Audit alongside full builds if reliability issues or broken pipelines are mentioned).
-3. Draft the technical study, architecture plan (weaving vertical hooks), ROI assessment, and Antigravity execution prompt signed "Mohamed Romih | MRomih Automations". Strictly forbid robotic AI self-titles.
+1. Assign "fit_score" (0-100): Score >= 75 ONLY for clear freelance/contractor hiring, agency partnership requests, Zapier/Make migration needs, broken webhook/CRM projects, or AI lead/voice agent builds. Score < 75 for general discussions or W-2-only full-time bigtech roles.
+2. Classify into closest vertical_playbooks key and offer_ladder tier (pitch $150 48h Credited Diagnostic Audit if broken webhooks or Zapier/Make bill-shock appear).
+3. Draft tailored outreach copy & Antigravity prompt signed "Mohamed Romih | MRomih Automations". Strictly forbid robotic AI self-titles.
 
 Output strictly valid JSON:
 {
+  "fit_score": 0-100,
+  "score_rationale": "1 concise sentence explaining the score",
   "matched_vertical": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines",
   "recommended_offer_tier": "diagnostic_audit | production_pipeline | enterprise_ai_system",
   "diagnosis": "2-3 sentences technical summary",
-  "architecture_plan": "Bulleted technical plan weaving vertical reliability hooks",
+  "architecture_plan": "Step-by-step architecture weaving vertical reliability hooks",
   "roi_calc": "Offer tier | Estimated value | Rate recommendation",
+  "proposed_copy": "Tailored reply/outreach signed 'Mohamed Romih | MRomih Automations'.",
   "antigravity_prompt": "Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine..."
 }`;
           const rawAi = await callGemini(aiPrompt);
           study = safeJsonParse(rawAi);
-          if (!study) throw new Error('Invalid JSON response from Gemini');
+          if (!study || typeof study.fit_score === 'undefined') throw new Error('Invalid JSON or missing fit_score from Gemini');
         } catch (e) {
+          const strongCommercial = /\b(freelancer|contractor|agency partner|white-label|zapier.*migrat|n8n.*hiring|who is hiring)\b/i.test(`${storyTitle} ${rawText}`);
           study = {
-            matched_vertical: /scrap|playwright|crawl|extract/i.test(text) ? 'scraping_and_data_pipelines' : 'b2b_gtm_and_lead_triage',
-            recommended_offer_tier: 'production_pipeline',
-            diagnosis: `HN thread mentioning automation/scraping need by ${hit.author}.`,
+            fit_score: strongCommercial ? 78 : 65,
+            score_rationale: 'Heuristic scoring fallback evaluating freelance/partner/migration signal strength.',
+            matched_vertical: /scrap|playwright|crawl|extract/i.test(rawText) ? 'scraping_and_data_pipelines' : 'b2b_gtm_and_lead_triage',
+            recommended_offer_tier: /broken|fail|zapier|migrat/i.test(rawText) ? 'diagnostic_audit' : 'production_pipeline',
+            diagnosis: `HN signal (${storyTitle || qItem.query}) by ${hit.author}.`,
             architecture_plan: 'Review thread context, apply vertical reliability architecture (HMAC gate, idempotency, dead-letter alerts), and share MRomih Automations GitHub/Contra proofs.',
-            roi_calc: '$500–$850 turnkey build or $45–$65/hr consulting.',
-            antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then review HN thread at ${hnUrl} and respond as Mohamed Romih | MRomih Automations with tailored architectural guidance.`
+            roi_calc: '$500–$850 turnkey build or $45–$65/hr consulting ($150 credited audit option).',
+            proposed_copy: `Hi ${hit.author || 'there'},\n\nI saw your note regarding "${storyTitle || qItem.query}". At MRomih Automations, I build resilient n8n workflows (HMAC verification, idempotent upserts, and dead-letter error handling) as well as zero-markup Zapier/Make migrations.\n\nGitHub architecture: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\nPortfolio: https://contra.com/mohamed_romih_jj5w3q2x\n\nBest regards,\nMohamed Romih | MRomih Automations`,
+            antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then review HN thread at ${hnUrl} and outreach as Mohamed Romih | MRomih Automations.`
           };
         }
 
+        const fitScore = Number(study.fit_score) || 0;
+        if (fitScore < 75) {
+          console.log(`[HackerNews] Skipped low-fit hit ${hit.objectID} (score=${fitScore}/100): ${study.score_rationale || ''}`);
+          continue;
+        }
+
+        metrics.bounties_found++;
+        metrics.last_bounty = `HN Lead: ${hit.author || 'User'} (${qItem.query.slice(0, 24)})`;
+        if (qItem.isDynamic && queryStats && queryStats[qItem.query]) {
+          queryStats[qItem.query].run_qualified++;
+        }
+        for (const dq of dynamicList) {
+          if (dq !== qItem.query && doesTextMatchDynamicQuery(`${storyTitle} ${rawText}`, dq) && queryStats && queryStats[dq]) {
+            queryStats[dq].run_qualified++;
+          }
+        }
+        console.log(`[HackerNews] Pre-vetted lead ${hit.objectID} (score=${fitScore}/100) by ${hit.author}`);
+
         const alertMsg =
-          `🟡 <b>[OPPORTUNITY — READY FOR ANTIGRAVITY]</b>\n` +
-          `<b>Hacker News Automation / Scraping Lead</b>\n\n` +
-          `👤 <b>Author:</b> <code>${escapeHtml(hit.author)}</code> | <b>Query:</b> <code>${escapeHtml(q)}</code>\n` +
+          `🟡 <b>[PRE-VETTED OPPORTUNITY — SCORE ${fitScore}/100]</b>\n` +
+          `<b>Hacker News Lead (${escapeHtml(qItem.query)})</b>\n\n` +
+          `📋 <b>Thread:</b> ${escapeHtml(storyTitle || 'HN Post/Comment')}\n` +
+          `👤 <b>Author:</b> <code>${escapeHtml(hit.author || 'hn_user')}</code>\n` +
           `🎯 <b>Playbook Match:</b> <code>${escapeHtml(study.matched_vertical || 'custom')}</code> | <b>Offer Tier:</b> <code>${escapeHtml(study.recommended_offer_tier || 'production_pipeline')}</code>\n` +
           `🔗 <b>URL:</b> <a href="${hnUrl}">View on Hacker News</a>\n\n` +
-          `🔬 <b>Technical Diagnosis:</b>\n` +
-          `${escapeHtml(study.diagnosis)}\n\n` +
+          `🔬 <b>Technical Diagnosis &amp; Rationale:</b>\n` +
+          `${escapeHtml(study.diagnosis)}\n<i>Score rationale: ${escapeHtml(study.score_rationale || '')}</i>\n\n` +
           `🛠️ <b>Architecture Plan:</b>\n` +
           `${escapeHtml(study.architecture_plan)}\n\n` +
           `📊 <b>Calculated ROI:</b> ${escapeHtml(study.roi_calc)}\n\n` +
+          (study.proposed_copy ? `📝 <b>Pre-Drafted Tailored Outreach:</b>\n<blockquote>${escapeHtml(study.proposed_copy)}</blockquote>\n\n` : '') +
           `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
           `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
           `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>\n` +
           ACTIONABLE_ROUTING_BANNER;
 
-        if (seenLeadIds) seenLeadIds.add(`hn_${hit.objectID}`);
         await sendTelegram(alertMsg);
       }
     } catch (err) {
-      console.warn(`[HackerNews] Error scanning query ${q}:`, err.message);
+      console.warn(`[HackerNews] Error scanning query ${qItem.query}:`, err.message);
     }
   }
 }
@@ -1157,10 +1355,11 @@ async function run() {
   const playbook = loadPlaybook();
   const initialTelemetry = loadLocalTelemetry();
   const seenLeadIds = new Set(Array.isArray(initialTelemetry.seen_lead_ids) ? initialTelemetry.seen_lead_ids : []);
+  const queryStats = initQueryStats(playbook, initialTelemetry);
   const schemaErrors = validateScoutSchemas(memory, playbook);
 
-  console.log(`[CloudScout] Loaded playbook.json: ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns.`);
-  console.log(`[CloudScout] Telemetry deduplication loaded: ${seenLeadIds.size} seen_lead_ids tracked (cap=300).`);
+  console.log(`[CloudScout] Loaded playbook.json: ${(playbook.dynamic_search_queries || []).length} dynamic queries, ${(playbook.winning_pitch_rules || []).length} pitch rules, ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns.`);
+  console.log(`[CloudScout] Telemetry deduplication loaded: ${seenLeadIds.size} seen_lead_ids tracked (cap=300), ${Object.keys(queryStats).length} query_stats keys.`);
 
   if (schemaErrors.length > 0) {
     if (!isDryRun) {
@@ -1171,14 +1370,19 @@ async function run() {
   }
 
   if (isDryRun) {
-    // Self-check Reddit pre-filter and deduplication mechanics cleanly without network calls
+    // Self-check Reddit, HN Who-is-Hiring, n8n Zapier/Make migration triggers, and query matching cleanly without network calls
     const mockHiring = isQualifiedRedditPost({ id: 'r1', title: '[Hiring] Need n8n webhook + HubSpot CRM sync engineer ($600)', selftext: 'Looking to hire an n8n freelancer, $600 budget.' }, 'forhire');
     const mockForHire = isQualifiedRedditPost({ id: 'r2', title: '[For Hire] n8n expert offering automation services', selftext: 'DM me for automation.' }, 'forhire');
     const mockMicro = isQualifiedRedditPost({ id: 'r3', title: '[Hiring] Quick $25 fix for zapier webhook', selftext: 'Budget $25 fixed.' }, 'forhire');
-    if (!mockHiring || mockForHire || mockMicro) {
-      throw new Error(`Reddit pre-filter self-check failed: hiring=${mockHiring}, forHire=${mockForHire}, micro=${mockMicro}`);
+    const mockHnWhoIsHiring = isCommercialHnHit({ objectID: 'hn1', story_title: 'Ask HN: Who is hiring? (November 2026)', comment_text: 'Looking for a remote freelance n8n + webhook contractor to fix HubSpot CRM sync.' });
+    const mockHnWantHired = isCommercialHnHit({ objectID: 'hn2', story_title: 'Ask HN: Who wants to be hired? (November 2026)', comment_text: 'Available for hire n8n developer.' });
+    const mockN8nMigration = isCommercialN8nTopic({ id: 999001, title: 'Zapier bill shock migrating 40 zaps to self-hosted n8n queue mode' }, 'latest');
+    const mockN8nBasic = isCommercialN8nTopic({ id: 999002, title: 'How do I format a date in set node?' }, 'latest');
+
+    if (!mockHiring || mockForHire || mockMicro || !mockHnWhoIsHiring || mockHnWantHired || !mockN8nMigration || mockN8nBasic) {
+      throw new Error(`Scout pre-filter self-check failed: hiring=${mockHiring}, forHire=${mockForHire}, micro=${mockMicro}, hnHiring=${mockHnWhoIsHiring}, hnWantHired=${mockHnWantHired}, n8nMig=${mockN8nMigration}, n8nBasic=${mockN8nBasic}`);
     }
-    console.log('[CloudScout] --dry-run passed: verified brain_memory.json, playbook.json, Reddit pre-filters (4 feeds), seen_lead_ids deduplication, and routing banners cleanly.');
+    console.log('[CloudScout] --dry-run passed: verified brain_memory.json, playbook.json (dynamic_search_queries + winning_pitch_rules), HN/n8n/Reddit pre-filters, seen_lead_ids deduplication, and routing banners cleanly.');
     return;
   }
 
@@ -1212,17 +1416,17 @@ async function run() {
   // 2. Scan Opire public rewards API
   await scanOpireBounties(headers, metrics, memory, seenLeadIds);
 
-  // 3. Scan n8n Community Jobs
-  await scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds);
+  // 3. Scan n8n Community (/c/jobs/18.json, /13.json, /latest.json migration/broken-webhook triggers)
+  await scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds, queryStats);
 
-  // 4. Scan Hacker News Algolia queries
-  await scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds);
+  // 4. Scan Hacker News Algolia queries (core + dynamic_search_queries + Who is Hiring comments)
+  await scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds, queryStats);
 
   // 5. Scan Reddit Automation & Hiring Feeds
   await scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook);
 
-  // 6. Update live telemetry in repository (including capped seen_lead_ids)
-  await updateLiveTelemetry(metrics, Array.from(seenN8nTopics), seenLeadIds);
+  // 6. Update live telemetry in repository (including capped seen_lead_ids & query_stats)
+  await updateLiveTelemetry(metrics, Array.from(seenN8nTopics), seenLeadIds, queryStats);
   console.log('[CloudScout] Autonomous technical scout cycle completed successfully.');
 }
 
