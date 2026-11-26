@@ -107,7 +107,8 @@ function getDefaultMemory() {
     error_postmortems: [],
     self_upgraded_rules: [],
     past_directives: [],
-    learned_rules: []
+    learned_rules: [],
+    requested_upgrades: []
   };
 }
 
@@ -128,7 +129,8 @@ function loadMemory() {
           ...defaults.system_health_baselines,
           ...(parsed.system_health_baselines || {})
         },
-        executive_charter: parsed.executive_charter || defaults.executive_charter
+        executive_charter: parsed.executive_charter || defaults.executive_charter,
+        requested_upgrades: Array.isArray(parsed.requested_upgrades) ? parsed.requested_upgrades : []
       };
       mem._rawPresent = true;
       return mem;
@@ -245,6 +247,7 @@ function validateSystemSchemas(memory, playbook) {
   if (!memory.executive_charter || !memory.executive_charter.north_star_goal) errors.push('brain_memory.json missing executive_charter');
   if (!memory.platform_schedules || typeof memory.platform_schedules !== 'object') errors.push('brain_memory.json missing platform_schedules');
   if (!Array.isArray(memory.active_deal_pipeline)) errors.push('brain_memory.json active_deal_pipeline must be an array');
+  if (!Array.isArray(memory.requested_upgrades)) errors.push('brain_memory.json requested_upgrades must be an array');
   if (!memory.system_health_baselines || typeof memory.system_health_baselines !== 'object') errors.push('brain_memory.json missing system_health_baselines');
 
   if (playbook._parseError) errors.push(playbook._parseError);
@@ -1592,6 +1595,179 @@ Output strictly valid JSON:
   };
 }
 
+function normalizeUpgradeTokens(text) {
+  const stopWords = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'via', 'new', 'using', 'based']);
+  const norm = String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const tokens = new Set(norm.split(/\s+/).filter(w => (w.length >= 2 || /^\d+$/.test(w)) && !stopWords.has(w)));
+  return { norm, tokens };
+}
+
+function isDuplicateUpgradeRequest(existingRequests, category, title) {
+  if (!Array.isArray(existingRequests) || existingRequests.length === 0) return false;
+  const target = normalizeUpgradeTokens(title);
+  if (!target.norm) return true;
+
+  for (const prev of existingRequests) {
+    if (!prev || !prev.title) continue;
+    const prevNorm = normalizeUpgradeTokens(prev.title);
+    if (prevNorm.norm === target.norm) return true;
+    if (prev.category === category && target.tokens.size >= 2 && prevNorm.tokens.size >= 2) {
+      let overlap = 0;
+      for (const tok of target.tokens) {
+        if (prevNorm.tokens.has(tok)) overlap++;
+      }
+      const unionSize = new Set([...target.tokens, ...prevNorm.tokens]).size;
+      if (unionSize > 0 && (overlap / unionSize) >= 0.75) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function recordSkillUpgradeRequest(memory, rawRequest) {
+  if (!rawRequest || rawRequest.needed !== true || !rawRequest.title || !rawRequest.why_needed) {
+    return null;
+  }
+  if (!Array.isArray(memory.requested_upgrades)) memory.requested_upgrades = [];
+
+  const allowedCategories = new Set(['new_skill', 'new_blueprint', 'new_data_source', 'playbook_knowledge']);
+  const category = allowedCategories.has(rawRequest.category) ? rawRequest.category : 'playbook_knowledge';
+  const cleanTitle = sanitizeClientCopy(String(rawRequest.title)).trim();
+  const cleanReason = sanitizeClientCopy(String(rawRequest.why_needed)).trim();
+  const cleanImpact = sanitizeClientCopy(String(rawRequest.expected_revenue_impact || '')).trim();
+
+  if (isDuplicateUpgradeRequest(memory.requested_upgrades, category, cleanTitle)) {
+    console.log(`🧬 [Skill Reflection] Suppressed duplicate upgrade request: "${cleanTitle}"`);
+    return null;
+  }
+
+  const slug = cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 36) || 'upgrade';
+  const entry = {
+    id: `req_${slug}_${Date.now()}`,
+    category,
+    title: cleanTitle,
+    reason: cleanReason,
+    ...(cleanImpact ? { expected_revenue_impact: cleanImpact } : {}),
+    status: 'REQUESTED',
+    requested_at: new Date().toISOString()
+  };
+
+  memory.requested_upgrades.push(entry);
+  if (memory.requested_upgrades.length > 25) {
+    memory.requested_upgrades = memory.requested_upgrades.slice(-25);
+  }
+  return entry;
+}
+
+async function evaluateSelfCapabilities(memory, playbook, telemetry, pacing) {
+  const scannerBlindSpots = [];
+  const playbookAndBlueprintGaps = [];
+  const conversionToolingGaps = [];
+  let blueprintsInspected = [];
+
+  // 1. Inspect Scanner Blind Spots in telemetry.json
+  if (telemetry && typeof telemetry === 'object') {
+    if (Number(telemetry.reddit_scanned_posts || 0) === 0) {
+      scannerBlindSpots.push('Reddit scanner reported 0 posts scanned in live telemetry (cloud IP rate-limit/block likely — consider an Apps Script / RSS bridge).');
+    }
+    if (typeof telemetry.hn_scanned_hits === 'number' && telemetry.hn_scanned_hits === 0) {
+      scannerBlindSpots.push('Hacker News Algolia scan returned 0 hits in latest telemetry.');
+    }
+    const qStats = telemetry.query_stats && typeof telemetry.query_stats === 'object' ? telemetry.query_stats : {};
+    const highZeroQueries = Object.values(qStats).filter(q => (Number(q?.zero_hit_runs) || 0) >= 3);
+    if (highZeroQueries.length > 0) {
+      scannerBlindSpots.push(`${highZeroQueries.length} dynamic search query(s) have >=3 consecutive zero-hit runs (${highZeroQueries.slice(0, 2).map(q => q.query).join('; ')}).`);
+    }
+  } else {
+    scannerBlindSpots.push('telemetry.json unreachable; live feed coverage could not be verified.');
+  }
+
+  // 2. Inspect Playbook & revenue-engine/blueprints Gaps
+  try {
+    const ghHeaders = {
+      'User-Agent': 'MRomihAutomations-Brain/1.0',
+      'Accept': 'application/vnd.github.v3+json'
+    };
+    if (GH_PAT) ghHeaders['Authorization'] = 'token ' + GH_PAT;
+    const bpRes = await fetch('https://api.github.com/repos/MRomih-Automations/revenue-engine/contents/blueprints', {
+      headers: ghHeaders,
+      signal: AbortSignal.timeout(8000)
+    });
+    if (bpRes.ok) {
+      const items = await bpRes.json();
+      if (Array.isArray(items)) {
+        blueprintsInspected = items.map(i => String(i.name || '')).filter(Boolean);
+      }
+    }
+  } catch (err) {
+    console.warn('[Self Reflection] Blueprints inventory check warning:', err.message);
+  }
+
+  const bpCorpus = blueprintsInspected.join(' ').toLowerCase();
+  const playbookCorpus = JSON.stringify({
+    verticals: playbook?.vertical_playbooks || {},
+    patterns: playbook?.discovered_market_patterns || []
+  }).toLowerCase();
+
+  const researchCorpus = (memory?.market_research_notes || [])
+    .slice(-15)
+    .map(n => `${n.topic || ''} ${n.tech_stacks || ''} ${n.recurring_problems || ''}`)
+    .join(' ')
+    .toLowerCase();
+
+  const candidateStacks = [
+    { keyword: 'redis', gapLabel: 'Self-hosted n8n Redis queue-mode scaling blueprint absent from revenue-engine/blueprints/' },
+    { keyword: 'queue mode', gapLabel: 'n8n queue-mode worker deployment blueprint missing from reusable delivery blueprints' },
+    { keyword: 'twilio', gapLabel: 'Twilio VoIP/SMS workflow blueprint missing from revenue-engine/blueprints/' },
+    { keyword: 'voice', gapLabel: 'AI voice agent webhook/escalation blueprint missing from revenue-engine/blueprints/' },
+    { keyword: 'quickbooks', gapLabel: 'QuickBooks idempotent invoicing blueprint missing from revenue-engine/blueprints/' },
+    { keyword: 'mcp', gapLabel: 'Custom MCP server boilerplate blueprint missing from revenue-engine/blueprints/' }
+  ];
+
+  const seenGapLabels = new Set();
+  for (const item of candidateStacks) {
+    if (researchCorpus.includes(item.keyword) && !bpCorpus.includes(item.keyword.split(' ')[0])) {
+      if (!seenGapLabels.has(item.gapLabel)) {
+        seenGapLabels.add(item.gapLabel);
+        playbookAndBlueprintGaps.push(item.gapLabel);
+      }
+    }
+  }
+  if (researchCorpus.includes('zapier') && !playbookCorpus.includes('zapier_migration')) {
+    playbookAndBlueprintGaps.push('Playbook lacks a dedicated Zapier/Make bill-shock ROI migration teardown blueprint.');
+  }
+
+  // 3. Inspect Conversion Tooling Gaps
+  if (pacing) {
+    if (pacing.proposals_sent > 0 && pacing.replies_received === 0) {
+      conversionToolingGaps.push(`${pacing.proposals_sent} outbound proposal(s) sent with 0 replies — consider an interactive $150 Credited Diagnostic Audit scope generator or quick proof deck builder.`);
+    }
+    if (pacing.replies_received > 0 && pacing.calls_booked === 0) {
+      conversionToolingGaps.push('Replies arriving without immediate call booking — consider a rapid discovery audit packager & secret-scanned delivery CLI.');
+    }
+  }
+  if ((memory?.published_templates || []).length < 2) {
+    conversionToolingGaps.push('Fewer than 2 published open-source templates logged in portfolio memory.');
+  }
+
+  const priorRequests = (memory?.requested_upgrades || []).map(r => ({
+    id: r.id,
+    category: r.category,
+    title: r.title,
+    status: r.status || 'REQUESTED',
+    requested_at: r.requested_at
+  }));
+
+  return {
+    scanner_blind_spots: scannerBlindSpots,
+    playbook_and_blueprint_gaps: playbookAndBlueprintGaps,
+    conversion_tooling_gaps: conversionToolingGaps,
+    blueprints_inspected: blueprintsInspected,
+    prior_requested_upgrades: priorRequests
+  };
+}
+
 async function run() {
   const isDryRun = process.argv.includes('--dry-run');
   console.log('🧠 [CEO Brain] Initializing Executive Intelligence v2 Cycle...');
@@ -1618,6 +1794,7 @@ async function run() {
       systemHealthBaselines: memory.system_health_baselines?.overall_status,
       dynamicQueriesCount: (playbook.dynamic_search_queries || []).length,
       winningPitchRulesCount: (playbook.winning_pitch_rules || []).length,
+      requestedUpgradesCount: (memory.requested_upgrades || []).length,
       northStarPacing: {
         revenue_gap_usd: pacing.revenue_gap_usd,
         reply_rate_pct: pacing.reply_rate_pct,
@@ -1643,6 +1820,7 @@ async function run() {
   const governance = evaluateGovernanceSchedules(memory, repoTemplates);
   const pacing = evaluateNorthStarPacing(memory);
   const studyResult = await studyExternalMarketSignals(memory, n8nJobs);
+  const selfCapabilities = await evaluateSelfCapabilities(memory, playbook, telemetry, pacing);
   const stagedStudyPost = studyResult.high_frequency_bottleneck
     ? stageStudiedLinkedInPost(memory, studyResult.high_frequency_bottleneck)
     : null;
@@ -1663,6 +1841,7 @@ Executive Charter & Commercial Playbook:
 - Milestones: ${JSON.stringify(memory.company_history_milestones, null, 2)}
 - $3,000/mo North Star Pacing & Bottleneck: ${JSON.stringify(pacing, null, 2)}
 - Today's Market Study Summary: ${JSON.stringify({ sources: studyResult.source_counts, topic: studyResult.topic, learned: studyResult.what_i_learned_today }, null, 2)}
+- Self-Reflection Capability & Blind-Spot Audit: ${JSON.stringify(selfCapabilities, null, 2)}
 - Offer Ladder: ${JSON.stringify(playbook.offer_ladder, null, 2)}
 - Winning Pitch Rules: ${JSON.stringify(playbook.winning_pitch_rules || [], null, 2)}
 - Vertical Playbooks Keys: ${JSON.stringify(Object.keys(playbook.vertical_playbooks || {}))}
@@ -1696,12 +1875,13 @@ ${opireBounties.slice(0, 3).map(b => `  * ${b.amount} - ${b.issue_url}`).join('\
 - Hacker News Automation Discussions (${hnHits.length} items):
 ${hnHits.slice(0, 3).map(h => `  * [${h.query}] ${h.author}: ${h.snippet}`).join('\n') || '  * None'}
 
-Executive Intelligence v2 — 3-Horizon Strategic Reasoning & 5-Stage Mandates:
+Executive Intelligence v2 — 3-Horizon Strategic Reasoning, Self-Reflection & 5-Stage Mandates:
 - Horizon 1 — Today (Tactical): Evaluate immediate deal follow-ups, phone sync commands, or high-ROI leads.
 - Horizon 2 — This Week (Operational): Address primary North Star bottleneck ("${pacing.primary_bottleneck}") and trigger due 48h platform sweeps.
 - Horizon 3 — This Month (Strategic): Analyze recurring client pain points across market_research_notes to productize into new Fiverr/Contra packages or blueprints.
+- Self-Reflection & Skill-Request Protocol: Review "Self-Reflection Capability & Blind-Spot Audit" above. Output "skill_or_knowledge_request.needed": true ONLY when a high-leverage, non-duplicate capability gap exists (e.g., blocked scanner feed needing Apps Script/RSS bridge, missing vertical blueprint in revenue-engine/blueprints/, or missing closing/delivery tooling). NEVER repeat any item already listed in prior_requested_upgrades.
 - Demand-Driven Asset Creation: Whenever github_lead_magnet_expansion is due (or repo has <3 templates), set "new_template_needed": true, select a template topic DIRECTLY from recurring buyer pain points in market_research_notes, supply complete workflow_json (real n8n nodes), realistic sample_test_run_md (2 payloads + traces), comprehensive readme_content, AND generate a ready-to-publish "linkedin_showcase_post" signed as "Mohamed Romih | MRomih Automations".
-- Human Escalation Gate: Set "human_action_required": true ONLY if a browser platform timer is due, a staged LinkedIn post is ready to publish, a deal follow-up has elapsed, or a high-intent client opportunity requires PC application. Otherwise set false with "Zero human intervention required".
+- Human Escalation Gate: Set "human_action_required": true ONLY if a browser platform timer is due, a staged LinkedIn post is ready to publish, a deal follow-up has elapsed, a high-intent client opportunity requires PC application, or "skill_or_knowledge_request.needed" is true. Otherwise set false with "Zero human intervention required".
 - Identity & Sign-Offs: Always sign proposals, posts, and outreach strictly as "Mohamed Romih | MRomih Automations". Never use robotic AI self-titles.
 
 Respond strictly in valid JSON format:
@@ -1725,6 +1905,13 @@ Respond strictly in valid JSON format:
     "build_effort_hours": 2-20,
     "decision": "BUILD_TEMPLATE" or "PURSUE_OUTREACH" or "STANDBY",
     "rationale": "ROI justification"
+  },
+  "skill_or_knowledge_request": {
+    "needed": false,
+    "category": "new_skill | new_blueprint | new_data_source | playbook_knowledge",
+    "title": "",
+    "why_needed": "",
+    "expected_revenue_impact": ""
   },
   "new_template_needed": true or false,
   "new_template": null or {
@@ -1786,6 +1973,7 @@ Respond strictly in valid JSON format:
         decision: 'STANDBY',
         rationale: 'High commercial demand based on client inquiries; optimal next template addition.'
       },
+      skill_or_knowledge_request: { needed: false, category: 'playbook_knowledge', title: '', why_needed: '', expected_revenue_impact: '' },
       new_template_needed: false,
       new_template: null,
       linkedin_showcase_post: null,
@@ -1959,6 +2147,9 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     if (memory.learned_rules.length > 25) memory.learned_rules = memory.learned_rules.slice(-25);
   }
 
+  // Record non-duplicate Skill / Knowledge Request into brain_memory.json -> requested_upgrades
+  const recordedUpgradeRequest = recordSkillUpgradeRequest(memory, analysis.skill_or_knowledge_request);
+
   // Closed-Loop Query Evolution & QA-Gated Targeting Upgrades -> playbook.json
   const evolutionReport = await evolveAcquisitionTargeting(memory, playbook, telemetry, studyResult, pacing);
 
@@ -1982,6 +2173,7 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     north_star_pacing: pacing,
     study_sources_scanned: studyResult.source_counts,
     last_evolution_summary: evolutionReport.search_targeting_upgrades,
+    requested_upgrades_total: (memory.requested_upgrades || []).length,
     conversion_funnel: memory.conversion_funnel,
     telegram_last_update_id: memory.telegram_last_update_id,
     playbook_discovered_patterns: (playbook.discovered_market_patterns || []).length
@@ -2021,7 +2213,18 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     `• <b>Search Targeting Upgrades:</b> ${escapeHtml(evolutionReport.search_targeting_upgrades)}\n` +
     `• <b>Recommended Founder Move:</b> ${escapeHtml(evolutionReport.recommended_founder_move)}` +
     (stagedStudyPost ? `\n• <b>Inbound LinkedIn Post Staged:</b> "${escapeHtml(stagedStudyPost.title)}"` : '') +
-    `\n\n` +
+    `\n\n`;
+
+  if (recordedUpgradeRequest) {
+    telegramMessage +=
+      `🧬 <b>[BRAIN SKILL / KNOWLEDGE REQUEST]</b>\n` +
+      `• <b>Category:</b> <code>${escapeHtml(recordedUpgradeRequest.category)}</code>\n` +
+      `• <b>Requested Upgrade:</b> ${escapeHtml(recordedUpgradeRequest.title)}\n` +
+      `• <b>Why Needed:</b> ${escapeHtml(recordedUpgradeRequest.reason)}\n` +
+      `• <b>Expected Revenue Impact:</b> ${escapeHtml(recordedUpgradeRequest.expected_revenue_impact || 'Accelerates pipeline coverage & closing throughput')}\n\n`;
+  }
+
+  telegramMessage +=
     `📊 <b>Market &amp; Deal Pipeline Synthesis:</b>\n` +
     `${escapeHtml(analysis.market_synthesis)}\n\n` +
     `🧭 <b>3-Horizon Strategic Assessment:</b>\n` +
@@ -2044,7 +2247,8 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     `<i>"${escapeHtml(analysis.learned_insight)}"</i>\n\n`;
 
   const hasDueItems = Boolean(
-    analysis.human_action_required ||
+    (!recordedUpgradeRequest && analysis.human_action_required && !String(analysis.action_reason || '').toLowerCase().includes('zero human intervention')) ||
+    recordedUpgradeRequest ||
     governance.dueBrowserSchedules.length > 0 ||
     governance.dueDeals.length > 0 ||
     analysis.antigravity_prompt ||
@@ -2057,6 +2261,9 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     const actionableParts = [];
     if (analysis.action_reason && !String(analysis.action_reason).toLowerCase().includes('zero human intervention')) {
       actionableParts.push(analysis.action_reason);
+    }
+    if (recordedUpgradeRequest) {
+      actionableParts.push(`Skill/Knowledge Request (${recordedUpgradeRequest.category}): ${recordedUpgradeRequest.title}`);
     }
     if (governance.dueBrowserSchedules.length > 0) {
       actionableParts.push(...governance.dueBrowserSchedules.map(s => s.name));
