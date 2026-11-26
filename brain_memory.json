@@ -337,5 +337,17 @@
     "Maintaining strict adherence to pre-scheduled follow-up windows prevents premature outreach while preserving high-intent client relationships."
   ],
   "analyzed_trends": [],
-  "requested_upgrades": []
+  "requested_upgrades": [],
+  "last_consolidation_at": "2026-11-26T16:35:00.000Z",
+  "active_experiment": {
+    "id": "exp_001_audit_hook_vs_fixed_scope",
+    "hypothesis": "Leading with a $150 48h Credited Diagnostic Audit converts cold prospects at a higher reply rate than pitching a direct fixed-price architecture scope upfront.",
+    "variant_a": "$150 Credited Diagnostic Audit hook",
+    "variant_b": "Direct fixed-price architecture scope",
+    "variant_a_sent": 0,
+    "variant_a_replies": 0,
+    "variant_b_sent": 0,
+    "variant_b_replies": 0,
+    "status": "RUNNING"
+  }
 }

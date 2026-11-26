@@ -108,7 +108,19 @@ function getDefaultMemory() {
     self_upgraded_rules: [],
     past_directives: [],
     learned_rules: [],
-    requested_upgrades: []
+    requested_upgrades: [],
+    last_consolidation_at: '2026-11-26T16:35:00.000Z',
+    active_experiment: {
+      id: 'exp_001_audit_hook_vs_fixed_scope',
+      hypothesis: 'Leading with a $150 48h Credited Diagnostic Audit converts cold prospects at a higher reply rate than pitching a direct fixed-price architecture scope upfront.',
+      variant_a: '$150 Credited Diagnostic Audit hook',
+      variant_b: 'Direct fixed-price architecture scope',
+      variant_a_sent: 0,
+      variant_a_replies: 0,
+      variant_b_sent: 0,
+      variant_b_replies: 0,
+      status: 'RUNNING'
+    }
   };
 }
 
@@ -130,7 +142,12 @@ function loadMemory() {
           ...(parsed.system_health_baselines || {})
         },
         executive_charter: parsed.executive_charter || defaults.executive_charter,
-        requested_upgrades: Array.isArray(parsed.requested_upgrades) ? parsed.requested_upgrades : []
+        requested_upgrades: Array.isArray(parsed.requested_upgrades) ? parsed.requested_upgrades : [],
+        last_consolidation_at: parsed.last_consolidation_at !== undefined ? parsed.last_consolidation_at : defaults.last_consolidation_at,
+        active_experiment: {
+          ...defaults.active_experiment,
+          ...(parsed.active_experiment && typeof parsed.active_experiment === 'object' ? parsed.active_experiment : {})
+        }
       };
       mem._rawPresent = true;
       return mem;
@@ -168,6 +185,9 @@ function loadPlaybook() {
       if (!Array.isArray(parsed.discovered_market_patterns)) {
         parsed.discovered_market_patterns = [];
       }
+      if (!Array.isArray(parsed.distilled_company_rules)) {
+        parsed.distilled_company_rules = [];
+      }
       parsed._rawPresent = true;
       return parsed;
     } catch (e) {
@@ -183,6 +203,7 @@ function loadPlaybook() {
         objection_handlers: {},
         content_and_outreach_frameworks: {},
         discovered_market_patterns: [],
+        distilled_company_rules: [],
         _parseError: `playbook.json parse failure: ${e.message}`
       };
     }
@@ -198,6 +219,7 @@ function loadPlaybook() {
     objection_handlers: {},
     content_and_outreach_frameworks: {},
     discovered_market_patterns: [],
+    distilled_company_rules: [],
     _parseError: 'playbook.json file not found'
   };
 }
@@ -248,6 +270,7 @@ function validateSystemSchemas(memory, playbook) {
   if (!memory.platform_schedules || typeof memory.platform_schedules !== 'object') errors.push('brain_memory.json missing platform_schedules');
   if (!Array.isArray(memory.active_deal_pipeline)) errors.push('brain_memory.json active_deal_pipeline must be an array');
   if (!Array.isArray(memory.requested_upgrades)) errors.push('brain_memory.json requested_upgrades must be an array');
+  if (!memory.active_experiment || typeof memory.active_experiment !== 'object') errors.push('brain_memory.json missing active_experiment object');
   if (!memory.system_health_baselines || typeof memory.system_health_baselines !== 'object') errors.push('brain_memory.json missing system_health_baselines');
 
   if (playbook._parseError) errors.push(playbook._parseError);
@@ -257,6 +280,7 @@ function validateSystemSchemas(memory, playbook) {
   if (!playbook.vertical_playbooks || Object.keys(playbook.vertical_playbooks).length === 0) errors.push('playbook.json missing vertical_playbooks');
   if (!playbook.objection_handlers || typeof playbook.objection_handlers !== 'object') errors.push('playbook.json missing objection_handlers');
   if (!Array.isArray(playbook.discovered_market_patterns)) errors.push('playbook.json discovered_market_patterns must be an array');
+  if (!Array.isArray(playbook.distilled_company_rules)) errors.push('playbook.json distilled_company_rules must be an array');
 
   return errors;
 }
@@ -1768,6 +1792,477 @@ async function evaluateSelfCapabilities(memory, playbook, telemetry, pacing) {
   };
 }
 
+function estimateDealValueUsd(deal) {
+  if (!deal) return 0;
+  if (typeof deal.estimated_value_usd === 'number' && deal.estimated_value_usd > 0) return deal.estimated_value_usd;
+  if (typeof deal.won_amount_usd === 'number' && deal.won_amount_usd > 0) return deal.won_amount_usd;
+  const text = `${deal.budget || ''} ${deal.rate_range || ''}`;
+  const matches = text.match(/\$[\d,]+/g);
+  if (!matches || matches.length === 0) return 0;
+  const nums = matches.map(m => parseFloat(m.replace(/[$,]/g, ''))).filter(n => !Number.isNaN(n));
+  if (nums.length === 0) return 0;
+  const top = Math.max(...nums);
+  if (/\/hr/i.test(text) && top <= 200) {
+    return top * 40;
+  }
+  return top;
+}
+
+function scoreDealMomentum(memory) {
+  const pipeline = Array.isArray(memory?.active_deal_pipeline) ? memory.active_deal_pipeline : [];
+  const CLOSED_RE = /^(won|won_paid|closed_lost|lost)$/i;
+  const nowMs = Date.now();
+  const ranked = [];
+
+  for (const deal of pipeline) {
+    if (!deal || CLOSED_RE.test(String(deal.status || ''))) continue;
+
+    const status = String(deal.status || 'OPEN');
+    let stagePts = 15;
+    if (/replied|discovery|call/i.test(status)) stagePts = 50;
+    else if (/proposal/i.test(status)) stagePts = 32;
+    else if (/pending|queued|linkedin|sent/i.test(status)) stagePts = 20;
+
+    const refDateStr = deal.last_phone_update || deal.last_touched_at || deal.submitted_at || deal.invitation_sent_at || deal.created_at;
+    let daysSince = 0;
+    if (typeof deal.no_reply_days === 'number') {
+      daysSince = Math.max(0, deal.no_reply_days);
+    } else if (refDateStr) {
+      const parsedMs = new Date(refDateStr).getTime();
+      if (!Number.isNaN(parsedMs)) {
+        daysSince = Math.max(0, (nowMs - parsedMs) / 86400000);
+      }
+    }
+
+    let recencyPts = 0;
+    if (daysSince <= 1) recencyPts = 30;
+    else if (daysSince <= 3) recencyPts = 24;
+    else if (daysSince <= 5) recencyPts = 16;
+    else if (daysSince <= 7) recencyPts = 8;
+    else recencyPts = Math.max(0, Math.round(8 - (daysSince - 7) * 1.5));
+
+    const valUsd = estimateDealValueUsd(deal);
+    let valuePts = 5;
+    if (valUsd >= 2000) valuePts = 20;
+    else if (valUsd >= 1000) valuePts = 16;
+    else if (valUsd >= 500) valuePts = 12;
+    else if (valUsd > 0) valuePts = 8;
+
+    const heatScore = Math.max(0, Math.min(100, stagePts + recencyPts + valuePts));
+    deal.heat_score = heatScore;
+
+    let urgency = 'COOL';
+    if (heatScore >= 75) urgency = 'CRITICAL';
+    else if (heatScore >= 55) urgency = 'HOT';
+    else if (heatScore >= 35) urgency = 'WARM';
+
+    let recommendedMove = 'Hold scheduled follow-up cadence; avoid premature double-pinging.';
+    if (/replied|discovery|call/i.test(status)) {
+      recommendedMove = 'Strike while momentum peaks: mirror their core pain metric and propose 2 concrete 15-min call slots + $150 credited audit kickoff.';
+    } else if (daysSince >= 7) {
+      recommendedMove = 'Trigger value-first breakup with the $150 48h Credited Diagnostic Audit micro-offer to disarm scope anxiety cleanly.';
+    } else if (daysSince >= 2 || (deal.follow_up_due_at && nowMs >= new Date(deal.follow_up_due_at).getTime())) {
+      recommendedMove = 'Send concise proof bump linking live GitHub workflow + Follow-the-Sun overnight delivery reassurance.';
+    }
+
+    ranked.push({
+      id: deal.id || deal.company,
+      company: deal.company || deal.contact_person || 'Lead',
+      status,
+      heat_score: heatScore,
+      urgency,
+      days_since_touch: Number(daysSince.toFixed(1)),
+      estimated_value_usd: valUsd,
+      recommended_move: recommendedMove
+    });
+  }
+
+  ranked.sort((a, b) => b.heat_score - a.heat_score);
+  return ranked;
+}
+
+async function runConsolidationQACritic(candidateRules, playbook) {
+  const combined = (candidateRules || []).join(' ');
+  if (hasSpamOrLowBudgetTerms(combined)) {
+    return {
+      score: 4,
+      approved: false,
+      critique: 'Rejected distilled rules containing spam, low-budget traps, or robotic AI titles.',
+      feedback: 'Strip non-founder or low-budget framing.'
+    };
+  }
+
+  const prompt = `
+You are the Principal QA Critic at MRomih Automations reviewing candidate permanent semantic operating principles before writing to playbook.json -> distilled_company_rules.
+
+Existing Rules (${(playbook.distilled_company_rules || []).length}):
+${JSON.stringify((playbook.distilled_company_rules || []).slice(-10), null, 2)}
+
+Candidate Consolidated Rules:
+${JSON.stringify(candidateRules, null, 2)}
+
+Review Criteria (Score >= 9 required to PASS):
+1. Permanence & Signal (1-10): Crisp, reusable cross-client operating principles (not one-off trivia).
+2. Zero Bloat & Hygiene (1-10): Non-duplicative, zero spam, strictly human founder framing ("Mohamed Romih | MRomih Automations").
+
+Output strictly valid JSON:
+{
+  "score": 9 or 10,
+  "approved": true or false,
+  "critique": "1-2 sentences evaluation",
+  "feedback": "Revision guidance or 'Ready for production'"
+}`;
+
+  try {
+    const raw = await callGemini(prompt);
+    const parsed = safeJsonParse(raw);
+    if (parsed && typeof parsed.score !== 'undefined') {
+      if (hasSpamOrLowBudgetTerms(combined)) {
+        return { ...parsed, score: Math.min(Number(parsed.score) || 0, 5), approved: false };
+      }
+      return parsed;
+    }
+    throw new Error('Invalid consolidation QA JSON');
+  } catch (err) {
+    console.warn('[Consolidation QA] Fallback scoring:', err.message);
+    const valid = Array.isArray(candidateRules) && candidateRules.length > 0 && candidateRules.every(r => typeof r === 'string' && r.trim().length >= 12) && !hasSpamOrLowBudgetTerms(combined);
+    return {
+      score: valid ? 9 : 6,
+      approved: valid,
+      critique: valid ? 'Concise, non-spam permanent operating principles validated.' : 'Rules failed completeness check.',
+      feedback: valid ? 'Ready for production' : 'Fix empty or invalid rules'
+    };
+  }
+}
+
+async function consolidateEpisodicMemory(memory, playbook) {
+  if (!Array.isArray(playbook.distilled_company_rules)) playbook.distilled_company_rules = [];
+  const notes = Array.isArray(memory.market_research_notes) ? memory.market_research_notes : [];
+  const lastMs = memory.last_consolidation_at ? new Date(memory.last_consolidation_at).getTime() : 0;
+  const daysSince = Number.isNaN(lastMs) ? Infinity : (Date.now() - lastMs) / 86400000;
+
+  if (daysSince < 7 && notes.length <= 30) {
+    return {
+      consolidated: false,
+      skipped_reason: 'cadence_not_due',
+      rules_added: [],
+      total_rules: playbook.distilled_company_rules.length,
+      summary: `Holds <b>${playbook.distilled_company_rules.length}</b> permanent rule(s); ${notes.length} episodic notes (next 7d / >30-note consolidation gate).`
+    };
+  }
+
+  console.log(`🧠 [Episodic Consolidation] Triggered (daysSince=${Number.isFinite(daysSince) ? daysSince.toFixed(1) : 'init'}, notes=${notes.length})...`);
+  let candidates = [];
+  try {
+    const synthPrompt = `
+You are the Principal Strategist at MRomih Automations (Founder: Mohamed Romih).
+Consolidate episodic logs into 1 to 4 permanent semantic operating principles for playbook.json -> distilled_company_rules so lessons compound permanently:
+
+Episodic Market Research Notes (${notes.length}):
+${JSON.stringify(notes.slice(-30), null, 2)}
+
+Active Deal Pipeline:
+${JSON.stringify(memory.active_deal_pipeline || [], null, 2)}
+
+Requested Capability Upgrades:
+${JSON.stringify((memory.requested_upgrades || []).slice(-10), null, 2)}
+
+Existing Permanent Rules (${playbook.distilled_company_rules.length}):
+${JSON.stringify(playbook.distilled_company_rules, null, 2)}
+
+Constraints:
+- Crisp, non-duplicative, actionable agency rules covering technical reliability, offer framing, or acquisition precision.
+- Zero robotic AI self-titles ("Autonomous COO", "AI Assistant").
+- Output strictly valid JSON:
+{
+  "rules": ["Permanent rule 1", "Permanent rule 2"]
+}`;
+    const raw = await callGemini(synthPrompt);
+    const parsed = safeJsonParse(raw);
+    if (Array.isArray(parsed?.rules)) {
+      candidates = parsed.rules.map(r => sanitizeClientCopy(String(r)).trim()).filter(r => r.length >= 12 && !hasSpamOrLowBudgetTerms(r));
+    }
+  } catch (err) {
+    console.warn('[Episodic Consolidation] Synthesis fallback:', err.message);
+  }
+
+  if (candidates.length === 0) {
+    candidates = [
+      'Consolidate recurring market friction (HMAC webhooks, Zapier bill-shock, idempotency) into reusable client blueprints rather than one-off custom scripts.'
+    ];
+  }
+
+  const existingNorm = new Set(playbook.distilled_company_rules.map(r => String(r).trim().toLowerCase()));
+  const freshCandidates = candidates.filter(r => !existingNorm.has(r.toLowerCase())).slice(0, 4);
+  if (freshCandidates.length === 0) {
+    memory.last_consolidation_at = new Date().toISOString();
+    return {
+      consolidated: false,
+      skipped_reason: 'no_novel_rules',
+      rules_added: [],
+      total_rules: playbook.distilled_company_rules.length,
+      summary: `Consolidated episodic review (${playbook.distilled_company_rules.length} rules already covered existing patterns).`
+    };
+  }
+
+  const qa = await runConsolidationQACritic(freshCandidates, playbook);
+  if (!qa.approved || (qa.score || 0) < 9) {
+    if (!Array.isArray(memory.error_postmortems)) memory.error_postmortems = [];
+    memory.error_postmortems.push({
+      timestamp: new Date().toISOString(),
+      event: 'Episodic Consolidation QA Rejection',
+      root_cause: qa.critique || 'Consolidated rules scored below 9/10.',
+      fix_applied: 'Aborted playbook.json write.'
+    });
+    return {
+      consolidated: false,
+      qa_rejected: true,
+      qa_score: qa.score || 0,
+      rules_added: [],
+      total_rules: playbook.distilled_company_rules.length,
+      summary: `Consolidation rejected by Principal QA (${qa.score || 0}/10); aborted write.`
+    };
+  }
+
+  playbook.distilled_company_rules = playbook.distilled_company_rules.concat(freshCandidates).slice(-30);
+  memory.last_consolidation_at = new Date().toISOString();
+  savePlaybook(playbook);
+  const persisted = await persistPlaybookToGitHub(
+    playbook,
+    `chore(playbook): consolidate ${freshCandidates.length} semantic rules into distilled_company_rules (QA ${qa.score}/10) [skip ci]`
+  );
+
+  return {
+    consolidated: true,
+    rules_added: freshCandidates,
+    qa_score: qa.score,
+    persisted,
+    total_rules: playbook.distilled_company_rules.length,
+    summary: `✅ Consolidated <b>${freshCandidates.length}</b> permanent rule(s) (QA ${qa.score}/10; total <b>${playbook.distilled_company_rules.length}/30</b>)${persisted ? ' &amp; persisted to GitHub' : ''}.`
+  };
+}
+
+async function runDealPostMortems(memory, playbook) {
+  if (!Array.isArray(memory?.active_deal_pipeline)) return { analyzed_count: 0, deals: [], rules_added: [] };
+  if (!Array.isArray(playbook.winning_pitch_rules)) playbook.winning_pitch_rules = [];
+  if (!Array.isArray(playbook.distilled_company_rules)) playbook.distilled_company_rules = [];
+
+  const nowMs = Date.now();
+  const analyzedDeals = [];
+  const rulesAdded = [];
+  let playbookModified = false;
+
+  for (const deal of memory.active_deal_pipeline) {
+    if (!deal || deal.post_mortem_done === true) continue;
+
+    const status = String(deal.status || '');
+    const isWon = /^won/i.test(status);
+    const isLost = /^(lost|closed_lost)/i.test(status);
+    const refTs = deal.last_phone_update || deal.last_touched_at || deal.submitted_at || deal.invitation_sent_at || deal.created_at;
+    let noReplyDays = typeof deal.no_reply_days === 'number' ? deal.no_reply_days : 0;
+    if (typeof deal.no_reply_days !== 'number' && refTs) {
+      const parsed = new Date(refTs).getTime();
+      if (!Number.isNaN(parsed)) noReplyDays = Math.floor((nowMs - parsed) / 86400000);
+    }
+    const isStalled = !isWon && !isLost && !/replied/i.test(status) && noReplyDays >= 7;
+
+    if (!isWon && !isLost && !isStalled) continue;
+
+    const outcomeLabel = isWon ? 'WON' : (isLost ? 'LOST' : `STALLED (${noReplyDays}d no reply)`);
+    let autopsy = null;
+    try {
+      const autopsyPrompt = `
+You are performing a Root-Cause Deal Autopsy for MRomih Automations (Founder: Mohamed Romih).
+Compare this deal against playbook.json -> winning_pitch_rules and extract ONE concrete, high-signal lesson:
+
+Outcome: ${outcomeLabel}
+Deal Data: ${JSON.stringify(deal, null, 2)}
+Current Winning Pitch Rules: ${JSON.stringify(playbook.winning_pitch_rules, null, 2)}
+
+Output strictly valid JSON:
+{
+  "root_cause": "1-2 sentences pinpointing pitch angle, budget tier, vertical match, or follow-up timing root cause",
+  "lesson_rule": "1 concise permanent rule signed/framed for Mohamed Romih | MRomih Automations",
+  "target_array": "winning_pitch_rules" or "distilled_company_rules"
+}`;
+      const raw = await callGemini(autopsyPrompt);
+      autopsy = safeJsonParse(raw);
+    } catch (err) {
+      console.warn(`[Deal Post-Mortem] AI fallback (${deal.company}):`, err.message);
+    }
+
+    if (!autopsy || !autopsy.lesson_rule) {
+      autopsy = {
+        root_cause: isWon
+          ? `Winning architecture & trust proof converted ${deal.company} at target agency pricing.`
+          : (isLost
+              ? `Deal lost (${deal.loss_reason || 'unspecified'}); tighten pre-qualification & risk-reversal hook.`
+              : `No reply after ${noReplyDays}d; cold proposals without interactive proof or low-friction diagnostic audit stall.`),
+        lesson_rule: isWon
+          ? `[Post-Mortem Win - ${deal.company}]: Repeat architecture-first proof + credited diagnostic option in similar vertical deals.`
+          : `[Post-Mortem ${outcomeLabel} - ${deal.company}]: Anchor cold pitches earlier with the $150 48h Credited Diagnostic Audit and concise Loom/GitHub proof within 48h.`,
+        target_array: 'winning_pitch_rules'
+      };
+    }
+
+    const cleanLesson = sanitizeClientCopy(String(autopsy.lesson_rule)).trim();
+    const targetKey = autopsy.target_array === 'distilled_company_rules' ? 'distilled_company_rules' : 'winning_pitch_rules';
+    if (cleanLesson && !hasSpamOrLowBudgetTerms(cleanLesson)) {
+      const targetList = playbook[targetKey];
+      const dup = targetList.some(r => String(r).trim().toLowerCase() === cleanLesson.toLowerCase());
+      if (!dup) {
+        targetList.push(cleanLesson);
+        if (targetKey === 'distilled_company_rules' && targetList.length > 30) {
+          playbook.distilled_company_rules = targetList.slice(-30);
+        } else if (targetKey === 'winning_pitch_rules' && targetList.length > 15) {
+          playbook.winning_pitch_rules = targetList.slice(-15);
+        }
+        rulesAdded.push(cleanLesson);
+        playbookModified = true;
+      }
+    }
+
+    deal.post_mortem_done = true;
+    deal.post_mortem_at = new Date().toISOString();
+    deal.post_mortem_root_cause = sanitizeClientCopy(autopsy.root_cause || outcomeLabel);
+    deal.post_mortem_lesson = cleanLesson;
+    analyzedDeals.push({ company: deal.company || deal.id, outcome: outcomeLabel, lesson: cleanLesson });
+  }
+
+  if (playbookModified) {
+    savePlaybook(playbook);
+    await persistPlaybookToGitHub(
+      playbook,
+      `chore(playbook): extract ${rulesAdded.length} post-mortem rule(s) from deal outcomes [skip ci]`
+    );
+  }
+
+  return {
+    analyzed_count: analyzedDeals.length,
+    deals: analyzedDeals,
+    rules_added: rulesAdded
+  };
+}
+
+async function evaluateActiveExperiment(memory, playbook) {
+  if (!memory.active_experiment || typeof memory.active_experiment !== 'object') {
+    memory.active_experiment = getDefaultMemory().active_experiment;
+  }
+  if (!Array.isArray(playbook.winning_pitch_rules)) playbook.winning_pitch_rules = [];
+
+  const exp = memory.active_experiment;
+  const aSent = Number(exp.variant_a_sent) || 0;
+  const aRep = Number(exp.variant_a_replies) || 0;
+  const bSent = Number(exp.variant_b_sent) || 0;
+  const bRep = Number(exp.variant_b_replies) || 0;
+
+  if (aSent < 5 || bSent < 5 || exp.status === 'CONCLUDED') {
+    return {
+      status: exp.status || 'RUNNING',
+      completed: false,
+      id: exp.id,
+      hypothesis: exp.hypothesis,
+      sample_progress: `A(${exp.variant_a}): ${aSent}/5 sent (${aRep} replies) | B(${exp.variant_b}): ${bSent}/5 sent (${bRep} replies)`,
+      summary: `🧪 A/B Test <code>${escapeHtml(exp.id)}</code> RUNNING — A: <b>${aSent}/5</b> (${aRep} rep) vs B: <b>${bSent}/5</b> (${bRep} rep).`
+    };
+  }
+
+  const aRate = aSent > 0 ? aRep / aSent : 0;
+  const bRate = bSent > 0 ? bRep / bSent : 0;
+  const winnerArm = (aRate >= bRate) ? 'A' : 'B';
+  const winnerVariant = winnerArm === 'A' ? exp.variant_a : exp.variant_b;
+  const winnerRatePct = Number(((winnerArm === 'A' ? aRate : bRate) * 100).toFixed(1));
+  const loserRatePct = Number(((winnerArm === 'A' ? bRate : aRate) * 100).toFixed(1));
+
+  const promotedRule = sanitizeClientCopy(
+    `[A/B Winner ${exp.id}]: Favor "${winnerVariant}" (${winnerRatePct}% reply rate vs ${loserRatePct}% across n>=5 sends/arm). Signed: Mohamed Romih | MRomih Automations.`
+  );
+  if (!playbook.winning_pitch_rules.some(r => String(r).toLowerCase() === promotedRule.toLowerCase())) {
+    playbook.winning_pitch_rules.push(promotedRule);
+    if (playbook.winning_pitch_rules.length > 15) {
+      playbook.winning_pitch_rules = playbook.winning_pitch_rules.slice(-15);
+    }
+  }
+  savePlaybook(playbook);
+  await persistPlaybookToGitHub(
+    playbook,
+    `chore(playbook): promote A/B experiment winner (${exp.id} -> Variant ${winnerArm}) [skip ci]`
+  );
+
+  if (!Array.isArray(memory.past_experiments)) memory.past_experiments = [];
+  memory.past_experiments.push({
+    ...exp,
+    status: 'CONCLUDED',
+    winner_arm: winnerArm,
+    winner_variant: winnerVariant,
+    winner_rate_pct: winnerRatePct,
+    loser_rate_pct: loserRatePct,
+    concluded_at: new Date().toISOString()
+  });
+  if (memory.past_experiments.length > 10) memory.past_experiments = memory.past_experiments.slice(-10);
+
+  let nextExp = null;
+  try {
+    const nextPrompt = `
+You are designing the next A/B sales hypothesis test for MRomih Automations (Founder: Mohamed Romih) after concluding "${exp.id}" where Variant ${winnerArm} ("${winnerVariant}") won (${winnerRatePct}% vs ${loserRatePct}% reply rate).
+Propose ONE clean, mutually exclusive commercial next A/B hypothesis testing pitch delivery, proof asset, or pricing framing.
+
+Output strictly valid JSON:
+{
+  "id": "exp_00X_short_slug",
+  "hypothesis": "1 concise testable hypothesis sentence",
+  "variant_a": "Variant A hook description",
+  "variant_b": "Variant B hook description"
+}`;
+    const raw = await callGemini(nextPrompt);
+    const parsed = safeJsonParse(raw);
+    if (parsed && parsed.id && parsed.variant_a && parsed.variant_b && !hasSpamOrLowBudgetTerms(`${parsed.hypothesis} ${parsed.variant_a} ${parsed.variant_b}`)) {
+      nextExp = {
+        id: String(parsed.id).trim(),
+        hypothesis: sanitizeClientCopy(parsed.hypothesis),
+        variant_a: sanitizeClientCopy(parsed.variant_a),
+        variant_b: sanitizeClientCopy(parsed.variant_b),
+        variant_a_sent: 0,
+        variant_a_replies: 0,
+        variant_b_sent: 0,
+        variant_b_replies: 0,
+        status: 'RUNNING'
+      };
+    }
+  } catch (err) {
+    console.warn('[A/B Experiment] Next hypothesis fallback:', err.message);
+  }
+
+  if (!nextExp) {
+    nextExp = {
+      id: `exp_next_${Date.now()}`,
+      hypothesis: 'Including a 42s live Loom walkthrough outperforms static GitHub architecture links on cold bids.',
+      variant_a: '42s video walkthrough link first + winning hook',
+      variant_b: 'GitHub n8n-ai-lead-triage-kit JSON proof link first',
+      variant_a_sent: 0,
+      variant_a_replies: 0,
+      variant_b_sent: 0,
+      variant_b_replies: 0,
+      status: 'RUNNING'
+    };
+  }
+
+  memory.active_experiment = nextExp;
+
+  return {
+    status: 'CONCLUDED_AND_ROTATED',
+    completed: true,
+    previous_id: exp.id,
+    winner_arm: winnerArm,
+    winner_variant: winnerVariant,
+    winner_rate_pct: winnerRatePct,
+    loser_rate_pct: loserRatePct,
+    promoted_rule: promotedRule,
+    next_experiment: nextExp,
+    summary: `🏆 Experiment <code>${escapeHtml(exp.id)}</code> concluded: Variant <b>${winnerArm}</b> won (<b>${winnerRatePct}%</b> vs ${loserRatePct}%), promoted to playbook, launched next test <code>${escapeHtml(nextExp.id)}</code>.`
+  };
+}
+
 async function run() {
   const isDryRun = process.argv.includes('--dry-run');
   console.log('🧠 [CEO Brain] Initializing Executive Intelligence v2 Cycle...');
@@ -1775,7 +2270,7 @@ async function run() {
   const memory = loadMemory();
   const playbook = loadPlaybook();
   const schemaErrors = validateSystemSchemas(memory, playbook);
-  console.log(`📘 [CEO Brain] Loaded playbook.json (${(playbook.dynamic_search_queries || []).length} dynamic queries, ${(playbook.winning_pitch_rules || []).length} pitch rules, ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns).`);
+  console.log(`📘 [CEO Brain] Loaded playbook.json (${(playbook.dynamic_search_queries || []).length} dynamic queries, ${(playbook.winning_pitch_rules || []).length} pitch rules, ${(playbook.distilled_company_rules || []).length} distilled rules, ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals).`);
 
   if (schemaErrors.length > 0) {
     if (!isDryRun) {
@@ -1788,13 +2283,17 @@ async function run() {
   if (isDryRun) {
     const governance = evaluateGovernanceSchedules(memory, []);
     const pacing = evaluateNorthStarPacing(memory);
+    const dealMomentum = scoreDealMomentum(memory);
     console.log('[CEO Brain] --dry-run passed: loaded brain_memory.json and playbook.json cleanly with 0 schema errors.', {
       knowledgeDistillationDue: governance.knowledgeDistillationDue,
       distillSignalCount: governance.distillSignalCount,
       systemHealthBaselines: memory.system_health_baselines?.overall_status,
       dynamicQueriesCount: (playbook.dynamic_search_queries || []).length,
       winningPitchRulesCount: (playbook.winning_pitch_rules || []).length,
+      distilledCompanyRulesCount: (playbook.distilled_company_rules || []).length,
       requestedUpgradesCount: (memory.requested_upgrades || []).length,
+      activeExperiment: memory.active_experiment?.id,
+      openDealHeatScores: dealMomentum.map(d => `${d.company}:${d.heat_score}`),
       northStarPacing: {
         revenue_gap_usd: pacing.revenue_gap_usd,
         reply_rate_pct: pacing.reply_rate_pct,
@@ -1819,6 +2318,7 @@ async function run() {
   const repoTemplates = await fetchRepoTemplates();
   const governance = evaluateGovernanceSchedules(memory, repoTemplates);
   const pacing = evaluateNorthStarPacing(memory);
+  const dealMomentum = scoreDealMomentum(memory);
   const studyResult = await studyExternalMarketSignals(memory, n8nJobs);
   const selfCapabilities = await evaluateSelfCapabilities(memory, playbook, telemetry, pacing);
   const stagedStudyPost = studyResult.high_frequency_bottleneck
@@ -1840,10 +2340,13 @@ Executive Charter & Commercial Playbook:
 - Charter: ${JSON.stringify(memory.executive_charter, null, 2)}
 - Milestones: ${JSON.stringify(memory.company_history_milestones, null, 2)}
 - $3,000/mo North Star Pacing & Bottleneck: ${JSON.stringify(pacing, null, 2)}
+- Deal Momentum Heat Ranking (hottest to coldest): ${JSON.stringify(dealMomentum, null, 2)}
+- Active A/B Hypothesis Test: ${JSON.stringify(memory.active_experiment || {}, null, 2)}
 - Today's Market Study Summary: ${JSON.stringify({ sources: studyResult.source_counts, topic: studyResult.topic, learned: studyResult.what_i_learned_today }, null, 2)}
 - Self-Reflection Capability & Blind-Spot Audit: ${JSON.stringify(selfCapabilities, null, 2)}
 - Offer Ladder: ${JSON.stringify(playbook.offer_ladder, null, 2)}
 - Winning Pitch Rules: ${JSON.stringify(playbook.winning_pitch_rules || [], null, 2)}
+- Permanent Distilled Company Rules: ${JSON.stringify((playbook.distilled_company_rules || []).slice(-10), null, 2)}
 - Vertical Playbooks Keys: ${JSON.stringify(Object.keys(playbook.vertical_playbooks || {}))}
 - Competitive Positioning: ${JSON.stringify(playbook.competitive_positioning || {}, null, 2)}
 - System Health Audit: ${healthAudit.statusLine}
@@ -1876,8 +2379,8 @@ ${opireBounties.slice(0, 3).map(b => `  * ${b.amount} - ${b.issue_url}`).join('\
 ${hnHits.slice(0, 3).map(h => `  * [${h.query}] ${h.author}: ${h.snippet}`).join('\n') || '  * None'}
 
 Executive Intelligence v2 — 3-Horizon Strategic Reasoning, Self-Reflection & 5-Stage Mandates:
-- Horizon 1 — Today (Tactical): Evaluate immediate deal follow-ups, phone sync commands, or high-ROI leads.
-- Horizon 2 — This Week (Operational): Address primary North Star bottleneck ("${pacing.primary_bottleneck}") and trigger due 48h platform sweeps.
+- Horizon 1 — Today (Tactical): Prioritize highest heat_score deal moves, immediate follow-ups, and phone sync commands.
+- Horizon 2 — This Week (Operational): Address primary North Star bottleneck ("${pacing.primary_bottleneck}") and advance active A/B experiment ("${memory.active_experiment?.id || 'exp_001'}").
 - Horizon 3 — This Month (Strategic): Analyze recurring client pain points across market_research_notes to productize into new Fiverr/Contra packages or blueprints.
 - Self-Reflection & Skill-Request Protocol: Review "Self-Reflection Capability & Blind-Spot Audit" above. Output "skill_or_knowledge_request.needed": true ONLY when a high-leverage, non-duplicate capability gap exists (e.g., blocked scanner feed needing Apps Script/RSS bridge, missing vertical blueprint in revenue-engine/blueprints/, or missing closing/delivery tooling). NEVER repeat any item already listed in prior_requested_upgrades.
 - Demand-Driven Asset Creation: Whenever github_lead_magnet_expansion is due (or repo has <3 templates), set "new_template_needed": true, select a template topic DIRECTLY from recurring buyer pain points in market_research_notes, supply complete workflow_json (real n8n nodes), realistic sample_test_run_md (2 payloads + traces), comprehensive readme_content, AND generate a ready-to-publish "linkedin_showcase_post" signed as "Mohamed Romih | MRomih Automations".
@@ -1983,7 +2486,7 @@ Respond strictly in valid JSON format:
         : 'Zero human intervention required. All platform governance timers and background sentinels operating within window.',
       governance_timers_triggered: governance.dueBrowserSchedules.map(s => s.id),
       antigravity_prompt: null,
-      learned_insight: 'Phone-to-brain feedback loops combined with closed-loop query evolution keep outreach aligned with live revenue triggers.'
+      learned_insight: 'Phone-to-brain feedback loops combined with episodic memory consolidation keep outreach compounding over time.'
     };
   }
 
@@ -2103,7 +2606,7 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     }
   }
 
-  // STAGE D: Autonomous Error Management & Ledger Persistence
+  // STAGE D: Cognitive Memory Consolidation, Post-Mortems, A/B Experiment & Ledger Persistence
   if (analysis.new_research_note && analysis.new_research_note.topic) {
     const normNote = String(analysis.new_research_note.topic).trim().toLowerCase();
     const hasDup = (memory.market_research_notes || []).some(
@@ -2115,8 +2618,24 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
         ...analysis.new_research_note
       });
     }
-    if (memory.market_research_notes.length > 40) memory.market_research_notes = memory.market_research_notes.slice(-40);
   }
+
+  // Record non-duplicate Skill / Knowledge Request BEFORE episodic consolidation so consolidation sees it
+  const recordedUpgradeRequest = recordSkillUpgradeRequest(memory, analysis.skill_or_knowledge_request);
+
+  // Module 1: Consolidate episodic research/deals/upgrades into semantic distilled_company_rules BEFORE pruning old notes
+  const consolidationReport = await consolidateEpisodicMemory(memory, playbook);
+  if (consolidationReport.consolidated && (memory.market_research_notes || []).length > 30) {
+    memory.market_research_notes = memory.market_research_notes.slice(-25);
+  } else if ((memory.market_research_notes || []).length > 40) {
+    memory.market_research_notes = memory.market_research_notes.slice(-40);
+  }
+
+  // Module 2: Win / Loss & Ghosting (>=7d) Deal Post-Mortem Autopsy Engine
+  const postMortemReport = await runDealPostMortems(memory, playbook);
+
+  // Module 3: Controlled A/B Hypothesis Testing Evaluation & Promotion
+  const experimentReport = await evaluateActiveExperiment(memory, playbook);
 
   if (analysis.roi_calculation && analysis.roi_calculation.opportunity) {
     memory.roi_calculations.push({
@@ -2147,9 +2666,6 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     if (memory.learned_rules.length > 25) memory.learned_rules = memory.learned_rules.slice(-25);
   }
 
-  // Record non-duplicate Skill / Knowledge Request into brain_memory.json -> requested_upgrades
-  const recordedUpgradeRequest = recordSkillUpgradeRequest(memory, analysis.skill_or_knowledge_request);
-
   // Closed-Loop Query Evolution & QA-Gated Targeting Upgrades -> playbook.json
   const evolutionReport = await evolveAcquisitionTargeting(memory, playbook, telemetry, studyResult, pacing);
 
@@ -2170,6 +2686,9 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     templates_in_lead_magnet: governance.repoTemplateCount,
     active_governance_schedules: Object.keys(governance.scheduleStatus).length,
     active_dynamic_queries: (playbook.dynamic_search_queries || []).length,
+    distilled_company_rules_count: (playbook.distilled_company_rules || []).length,
+    active_experiment_status: experimentReport.status,
+    open_deal_momentum: dealMomentum.map(d => ({ id: d.id, company: d.company, heat_score: d.heat_score, urgency: d.urgency })),
     north_star_pacing: pacing,
     study_sources_scanned: studyResult.source_counts,
     last_evolution_summary: evolutionReport.search_targeting_upgrades,
@@ -2207,7 +2726,18 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     `📈 <b>$3,000/mo North Star Pacing &amp; Funnel:</b>\n` +
     `• <b>Revenue:</b> <b>$${pacing.total_revenue_usd} / $${pacing.target_monthly_usd} USD</b> (Gap: <b>$${pacing.revenue_gap_usd} USD</b>)\n` +
     `• <b>Funnel:</b> Sent <b>${pacing.proposals_sent}</b> | Replies <b>${pacing.replies_received}</b> (<b>${pacing.reply_rate_pct}%</b>) | Calls <b>${pacing.calls_booked}</b> (<b>${pacing.call_rate_pct}%</b>) | Won <b>${pacing.deals_won}</b> (<b>${pacing.win_rate_pct}%</b>)\n` +
-    `• <b>#1 Bottleneck:</b> <code>${escapeHtml(pacing.primary_bottleneck)}</code> — <i>${escapeHtml(pacing.bottleneck_prescription)}</i>\n\n` +
+    `• <b>#1 Bottleneck:</b> <code>${escapeHtml(pacing.primary_bottleneck)}</code> — <i>${escapeHtml(pacing.bottleneck_prescription)}</i>\n\n`;
+
+  const momentumLines = dealMomentum.length > 0
+    ? dealMomentum.map(d => `• <b>[${d.heat_score}/100 | ${d.urgency}] ${escapeHtml(d.company)}</b> (<code>${escapeHtml(d.status)}</code>, ${d.days_since_touch}d ago): <i>${escapeHtml(d.recommended_move)}</i>`).join('\n')
+    : '• No open deals currently queued in pipeline.';
+  telegramMessage +=
+    `🔥 <b>[DEAL MOMENTUM &amp; URGENCY RANKING]</b>\n` +
+    `${momentumLines}\n\n` +
+    `🧪 <b>[COGNITIVE MEMORY &amp; A/B EXPERIMENT]</b>\n` +
+    `• <b>Episodic Consolidation:</b> ${consolidationReport.summary}\n` +
+    `• <b>Deal Post-Mortems:</b> ${postMortemReport.analyzed_count > 0 ? `Analyzed <b>${postMortemReport.analyzed_count}</b> deal(s), extracted ${postMortemReport.rules_added.length} rule(s).` : '0 newly closed or >=7d stalled deals pending autopsy.'}\n` +
+    `• <b>A/B Hypothesis Test:</b> ${experimentReport.summary}\n\n` +
     `🧠 <b>[BRAIN STUDY &amp; EVOLUTION ADVICE]</b>\n` +
     `• <b>What I Learned Today:</b> ${escapeHtml(evolutionReport.what_i_learned_today)}\n` +
     `• <b>Search Targeting Upgrades:</b> ${escapeHtml(evolutionReport.search_targeting_upgrades)}\n` +
@@ -2249,6 +2779,7 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
   const hasDueItems = Boolean(
     (!recordedUpgradeRequest && analysis.human_action_required && !String(analysis.action_reason || '').toLowerCase().includes('zero human intervention')) ||
     recordedUpgradeRequest ||
+    experimentReport.completed ||
     governance.dueBrowserSchedules.length > 0 ||
     governance.dueDeals.length > 0 ||
     analysis.antigravity_prompt ||
@@ -2264,6 +2795,9 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     }
     if (recordedUpgradeRequest) {
       actionableParts.push(`Skill/Knowledge Request (${recordedUpgradeRequest.category}): ${recordedUpgradeRequest.title}`);
+    }
+    if (experimentReport.completed) {
+      actionableParts.push(`A/B Test Concluded (${experimentReport.previous_id} -> Variant ${experimentReport.winner_arm})`);
     }
     if (governance.dueBrowserSchedules.length > 0) {
       actionableParts.push(...governance.dueBrowserSchedules.map(s => s.name));
