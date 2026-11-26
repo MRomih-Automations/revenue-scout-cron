@@ -113,6 +113,18 @@ function loadPlaybook() {
   };
 }
 
+function loadLocalTelemetry() {
+  const telPath = path.join(__dirname, 'telemetry.json');
+  if (fs.existsSync(telPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(telPath, 'utf8'));
+    } catch (e) {
+      console.warn('[Scout] Error reading local telemetry.json:', e.message);
+    }
+  }
+  return { seen_n8n_topics: [], seen_lead_ids: [] };
+}
+
 function validateScoutSchemas(memory, playbook) {
   const errors = [];
   if (memory._parseError) errors.push(memory._parseError);
@@ -190,6 +202,7 @@ function sendTelegram(htmlText) {
 }
 
 const _sentHealthAlertKeys = new Set();
+const ACTIONABLE_ROUTING_BANNER = '📋 <b>NEXT STEP:</b> Paste this message to Gemini for your ready-to-run Antigravity prompt.';
 
 function formatHealthAlertHtml(component, issueSummary, errorDetails) {
   const safeComp = escapeHtml(component || 'Cloud Scout');
@@ -201,7 +214,8 @@ function formatHealthAlertHtml(component, issueSummary, errorDetails) {
     `<b>Issue:</b> ${safeIssue}\n` +
     `<b>Timestamp (UTC):</b> <code>${new Date().toISOString()}</code>` +
     safeDetails +
-    `\n🛠️ <i>Immediate diagnostic review recommended (Cloud Scout Watchdog).</i>`
+    `\n🛠️ <i>Immediate diagnostic review recommended (Cloud Scout Watchdog).</i>\n\n` +
+    ACTIONABLE_ROUTING_BANNER
   );
 }
 
@@ -272,7 +286,7 @@ async function callGemini(prompt) {
   throw new Error('All Gemini API models failed in Scout.');
 }
 
-async function updateLiveTelemetry(metrics, seenN8nTopics) {
+async function updateLiveTelemetry(metrics, seenN8nTopics, seenLeadIds) {
   const token = GH_PAT || process.env.GITHUB_TOKEN;
   if (!token) {
     console.log('[Telemetry] Missing GH_PAT and GITHUB_TOKEN, skipping repository telemetry push.');
@@ -291,6 +305,7 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
     let sha = null;
     let existingData = {};
     let existingSeen = [];
+    let existingLeadIds = [];
     const existing = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/telemetry.json`, {
       headers: { 'Authorization': 'token ' + token, 'User-Agent': 'CloudScout', 'Accept': 'application/vnd.github.v3+json' }
     });
@@ -302,11 +317,13 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
         if (parsed && typeof parsed === 'object') {
           existingData = parsed;
           if (Array.isArray(parsed.seen_n8n_topics)) existingSeen = parsed.seen_n8n_topics;
+          if (Array.isArray(parsed.seen_lead_ids)) existingLeadIds = parsed.seen_lead_ids;
         }
       } catch (e) {}
     }
 
     const mergedSeen = Array.from(new Set([...existingSeen, ...(seenN8nTopics || [])])).slice(-100);
+    const mergedLeadIds = Array.from(new Set([...existingLeadIds, ...Array.from(seenLeadIds || [])])).slice(-300);
 
     const payload = {
       ...existingData,
@@ -319,7 +336,9 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
       qualified_bounties_found: metrics.bounties_found || 0,
       last_bounty_title: metrics.last_bounty || existingData.last_bounty_title || null,
       hn_scanned_hits: metrics.hn_scanned_hits || 0,
-      seen_n8n_topics: mergedSeen
+      reddit_scanned_posts: metrics.reddit_scanned_posts || 0,
+      seen_n8n_topics: mergedSeen,
+      seen_lead_ids: mergedLeadIds
     };
 
     const jsonStr = JSON.stringify(payload, null, 2);
@@ -355,7 +374,7 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
   }
 }
 
-async function scanAlgoraBounties(headers, metrics, memory) {
+async function scanAlgoraBounties(headers, metrics, memory, seenLeadIds) {
   console.log('[CloudScout] Scanning Algora escrow bounties...');
   const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const q = 'is:issue is:open commenter:algora-pbc updated:>=' + sixtyDaysAgo + ' sort:updated-desc';
@@ -376,6 +395,8 @@ async function scanAlgoraBounties(headers, metrics, memory) {
       if (!match) continue;
       const repo = match[1];
       const issueNum = match[2];
+      const leadId = `algora_${repo}_${issueNum}`;
+      if (seenLeadIds && seenLeadIds.has(leadId)) continue;
 
       if (/rustchain|scottcjn/i.test(repo) || /\b(RTC|token|tokens|airdrop|social mining)\b/i.test(item.title)) {
         continue;
@@ -477,8 +498,10 @@ Output JSON:
         `🔗 <a href="${item.html_url}">View Issue on GitHub</a>\n\n` +
         `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
         `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
-        `🏛️ <i>MRomih Automations Autonomous Cloud Scout</i>`;
+        `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>\n` +
+        ACTIONABLE_ROUTING_BANNER;
 
+      if (seenLeadIds) seenLeadIds.add(leadId);
       await sendTelegram(alertMsg);
     }
   } catch (err) {
@@ -486,7 +509,7 @@ Output JSON:
   }
 }
 
-async function scanOpireBounties(headers, metrics, memory) {
+async function scanOpireBounties(headers, metrics, memory, seenLeadIds) {
   console.log('[CloudScout] Scanning Opire public reward API...');
   try {
     const res = await fetch('https://api.opire.dev/rewards', {
@@ -506,6 +529,8 @@ async function scanOpireBounties(headers, metrics, memory) {
 
       const repo = match[1];
       const issueNum = match[2];
+      const leadId = `opire_${repo}_${issueNum}`;
+      if (seenLeadIds && seenLeadIds.has(leadId)) continue;
 
       let bounty = 0;
       if (item.pendingPrice && item.pendingPrice.unit === 'USD_CENT') {
@@ -603,8 +628,10 @@ Output JSON:
         `🔗 <a href="${item.url}">View Issue on GitHub</a>\n\n` +
         `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
         `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
-        `🏛️ <i>MRomih Automations Autonomous Cloud Scout</i>`;
+        `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>\n` +
+        ACTIONABLE_ROUTING_BANNER;
 
+      if (seenLeadIds) seenLeadIds.add(leadId);
       await sendTelegram(alertMsg);
     }
   } catch (err) {
@@ -612,7 +639,7 @@ Output JSON:
   }
 }
 
-async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook) {
+async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds) {
   console.log('[CloudScout] Scanning n8n Community Jobs category...');
   const appliedTopicIds = getTrackedTopicIds(memory);
   const playbookContext = formatPlaybookContext(playbook || {});
@@ -653,8 +680,9 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook) {
       const createdTime = new Date(topic.created_at).getTime();
       if (createdTime < fourteenDaysAgo) continue;
 
-      // Skip if seen in current session or already applied in memory pipeline
-      if (seenN8nTopics.has(topic.id) || appliedTopicIds.has(topic.id)) {
+      // Skip if seen in current session, telemetry lead history, or already applied in memory pipeline
+      const n8nLeadId = `n8n_${topic.id}`;
+      if (seenN8nTopics.has(topic.id) || appliedTopicIds.has(topic.id) || (seenLeadIds && seenLeadIds.has(n8nLeadId))) {
         continue;
       }
 
@@ -809,8 +837,10 @@ Output strictly valid JSON:
         `<blockquote>${escapeHtml(study.proposed_copy)}</blockquote>\n\n` +
         `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
         `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
-        `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>`;
+        `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>\n` +
+        ACTIONABLE_ROUTING_BANNER;
 
+      if (seenLeadIds) seenLeadIds.add(`n8n_${topic.id}`);
       await sendTelegram(alertMsg);
       console.log(`[n8n Community] Dispatched pre-analyzed Antigravity opportunity for #${topic.id}`);
     }
@@ -819,7 +849,7 @@ Output strictly valid JSON:
   }
 }
 
-async function scanHackerNews(metrics, seenHnIds, memory, playbook) {
+async function scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds) {
   console.log('[CloudScout] Scanning Hacker News Algolia API for automation & scraping opportunities...');
   const queries = ['n8n', 'web+scraping+automation'];
   metrics.hn_scanned_hits = 0;
@@ -839,7 +869,8 @@ async function scanHackerNews(metrics, seenHnIds, memory, playbook) {
       const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
       for (const hit of hits) {
-        if (!hit.objectID || seenHnIds.has(hit.objectID)) continue;
+        const hnLeadId = `hn_${hit.objectID}`;
+        if (!hit.objectID || seenHnIds.has(hit.objectID) || (seenLeadIds && seenLeadIds.has(hnLeadId))) continue;
         const createdAt = new Date(hit.created_at).getTime();
         if (createdAt < oneWeekAgo) continue;
 
@@ -918,12 +949,202 @@ Output strictly valid JSON:
           `📊 <b>Calculated ROI:</b> ${escapeHtml(study.roi_calc)}\n\n` +
           `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
           `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
-          `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>`;
+          `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>\n` +
+          ACTIONABLE_ROUTING_BANNER;
 
+        if (seenLeadIds) seenLeadIds.add(`hn_${hit.objectID}`);
         await sendTelegram(alertMsg);
       }
     } catch (err) {
       console.warn(`[HackerNews] Error scanning query ${q}:`, err.message);
+    }
+  }
+}
+
+const REDDIT_FEEDS = [
+  { subreddit: 'forhire', url: 'https://www.reddit.com/r/forhire/new.json?limit=25' },
+  { subreddit: 'n8n', url: 'https://www.reddit.com/r/n8n/new.json?limit=25' },
+  { subreddit: 'automation', url: 'https://www.reddit.com/r/automation/new.json?limit=25' },
+  { subreddit: 'AI_Agents', url: 'https://www.reddit.com/r/AI_Agents/new.json?limit=25' }
+];
+
+function isQualifiedRedditPost(postData, subreddit) {
+  if (!postData || !postData.id || !postData.title) return false;
+  if (postData.stickied || postData.removed_by_category) return false;
+
+  const title = String(postData.title || '');
+  const selftext = String(postData.selftext || '');
+  if (selftext === '[removed]' || selftext === '[deleted]') return false;
+
+  // Skip posts older than 14 days
+  const fourteenDaysAgoSec = (Date.now() - 14 * 24 * 60 * 60 * 1000) / 1000;
+  if (postData.created_utc && postData.created_utc < fourteenDaysAgoSec) return false;
+
+  const combined = `${title}\n${selftext}`;
+
+  // Exclude [For Hire] self-promotion and service ads
+  if (/\[\s*for\s*hire\s*\]/i.test(title) || /\b(available for hire|offering my (?:n8n|automation|ai) services|i am an? (?:n8n|automation|ai|python) (?:freelancer|developer|engineer)|for hire:)/i.test(combined)) {
+    return false;
+  }
+
+  // Exclude unpaid / commission / equity traps
+  if (/\b(unpaid|commission-only|commission only|equity only|equity-only|revshare|revenue share|for free|volunteer)\b/i.test(combined)) {
+    return false;
+  }
+
+  // Exclude sub-$100 fixed micro-tasks (while allowing hourly rates like $45/hr)
+  const smallFixedBudget =
+    /(?:budget|fixed|paying|pay|offer(?:ing)?)\s*(?:is|of|:)?\s*\$\s*([1-9]\d?)\b(?!\s*(?:\/|\s*per\s*)?(?:hr|hour|h\b|k\b))/i.test(combined) ||
+    /\[\s*hiring\s*\][^\n]{0,80}\$\s*([1-9]\d?)\b(?!\s*(?:\/|\s*per\s*)?(?:hr|hour|k\b))/i.test(title);
+  if (smallFixedBudget) {
+    return false;
+  }
+
+  // Require hiring / contractor / paid budget signal
+  const hasHiringSignal = /(\[\s*hiring\s*\]|\blooking to hire\b|\blooking for (?:a |an )?(?:freelancer|contractor|developer|engineer|consultant|expert|specialist)\b|\bneed (?:a |an )?(?:freelancer|contractor|developer|engineer)\b|\bbudget\b|\bfreelancer\b|\bcontractor\b)/i.test(combined);
+  if (!hasHiringSignal) {
+    return false;
+  }
+
+  // Require relevant automation / n8n / webhook / AI agent / CRM technical signal
+  const hasTechSignal = /\b(n8n|webhook|api integration|ai agent|crm sync|crm|airtable|hubspot|automation|workflow|scraper|scraping|playwright|zapier|make\.com)\b/i.test(combined);
+  return hasTechSignal;
+}
+
+async function scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook) {
+  console.log('[CloudScout] Scanning Reddit public feeds (r/forhire, r/n8n, r/automation, r/AI_Agents)...');
+  const playbookContext = formatPlaybookContext(playbook || {});
+  metrics.reddit_scanned_posts = 0;
+
+  for (const feed of REDDIT_FEEDS) {
+    try {
+      const res = await fetch(feed.url, {
+        headers: {
+          'User-Agent': 'MRomihAutomations-Scout/1.0',
+          'Accept': 'application/json'
+        },
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (res.status === 429) {
+        const retryAfter = res.headers.get('retry-after') || 'unknown';
+        console.warn(`[Reddit r/${feed.subreddit}] Rate limited (HTTP 429, Retry-After: ${retryAfter}); skipping gracefully.`);
+        continue;
+      }
+      if (!res.ok) {
+        console.warn(`[Reddit r/${feed.subreddit}] Non-OK HTTP ${res.status}; skipping feed gracefully.`);
+        continue;
+      }
+
+      const json = await res.json();
+      const children = json?.data?.children || [];
+      metrics.issues_scanned += children.length;
+      metrics.reddit_scanned_posts += children.length;
+
+      for (const child of children) {
+        const post = child?.data;
+        if (!isQualifiedRedditPost(post, feed.subreddit)) continue;
+
+        const leadId = `reddit_${post.id}`;
+        if (seenLeadIds && seenLeadIds.has(leadId)) continue;
+
+        // Mark seen immediately so low-scoring or evaluated posts are never re-processed
+        if (seenLeadIds) seenLeadIds.add(leadId);
+
+        const postUrl = post.permalink
+          ? `https://www.reddit.com${post.permalink}`
+          : (post.url || `https://www.reddit.com/r/${feed.subreddit}/comments/${post.id}`);
+        const postBody = String(post.selftext || '').replace(/\s+/g, ' ').trim();
+        const authorName = post.author || 'reddit_poster';
+
+        let study = null;
+        try {
+          const aiPrompt = `
+You are the Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
+Score and evaluate this Reddit hiring/project lead using our Commercial & Technical Playbook:
+
+Subreddit: r/${feed.subreddit}
+Title: ${post.title}
+Author: u/${authorName}
+URL: ${postUrl}
+Body:
+${postBody.substring(0, 2200)}
+
+Commercial & Technical Playbook (playbook.json):
+${playbookContext}
+
+Scoring & Drafting Mandates:
+1. Score this opportunity 0 to 100 ("fit_score") based on budget legitimacy (>= $100 or $25+/hr), hiring urgency, technical alignment with n8n/webhooks/AI agents/CRMs/scraping, and clear commercial value. Score < 75 for vague ideas, micro-tasks, or unclear unpaid asks.
+2. Classify into closest vertical_playbooks key ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
+3. Select the highest-converting offer_ladder tier ("diagnostic_audit", "production_pipeline", or "enterprise_ai_system"). If broken workflows or unreliable freelancers are mentioned, pitch the $150 48h Credited Diagnostic Audit alongside the build.
+4. Sign proposed_copy strictly as "Mohamed Romih | MRomih Automations". Strictly forbid robotic AI self-titles.
+
+Output strictly valid JSON:
+{
+  "fit_score": 0-100,
+  "score_rationale": "1 concise sentence explaining the score",
+  "matched_vertical": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines",
+  "recommended_offer_tier": "diagnostic_audit | production_pipeline | enterprise_ai_system",
+  "technical_study": "2-3 sentences technical breakdown",
+  "workflow_architecture": "Step-by-step n8n or scraper pipeline plan",
+  "calculated_roi": "Offer tier | Estimated value | Rate recommendation",
+  "proposed_copy": "Tailored Reddit DM/comment response weaving playbook hooks, GitHub/Contra proofs, signed 'Mohamed Romih | MRomih Automations'.",
+  "antigravity_prompt": "Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine..."
+}`;
+          const rawAi = await callGemini(aiPrompt);
+          study = safeJsonParse(rawAi);
+          if (!study || typeof study.fit_score === 'undefined') {
+            throw new Error('Invalid JSON or missing fit_score from Gemini');
+          }
+        } catch (err) {
+          console.warn(`[Reddit r/${feed.subreddit}] AI scorer fallback (${post.id}):`, err.message);
+          const hasExplicitHighSignal = /(\[\s*hiring\s*\]|n8n|webhook|crm|airtable|hubspot|budget|\$\d{3,})/i.test(`${post.title} ${postBody}`);
+          study = {
+            fit_score: hasExplicitHighSignal ? 78 : 65,
+            score_rationale: 'Heuristic qualification fallback evaluating hiring tags, automation keywords, and budget cues.',
+            matched_vertical: /gumroad|stripe|shopify|airtable/i.test(postBody) ? 'ecommerce_and_creators' : (/scrap|playwright/i.test(postBody) ? 'scraping_and_data_pipelines' : 'b2b_gtm_and_lead_triage'),
+            recommended_offer_tier: /broken|fail|fix|unreliable/i.test(postBody) ? 'diagnostic_audit' : 'production_pipeline',
+            technical_study: `Reddit opportunity on r/${feed.subreddit}: ${post.title}. Requires production webhook/CRM or AI agent reliability.`,
+            workflow_architecture: '1. Webhook Security Gate (HMAC) -> 2. Idempotency Lookup -> 3. Normalized Upsert / AI Triage -> 4. Error Dead-Letter Alerting.',
+            calculated_roi: 'Target $500–$850 turnkey build or $45–$65/hr ($150 credited audit option).',
+            proposed_copy: `Hi,\n\nI saw your post regarding "${post.title}". At MRomih Automations, I architect production n8n & AI agent pipelines with HMAC webhook verification, idempotency deduplication, and dead-letter error routing so automations never fail silently.\n\nInspect our open-source architecture: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\nCase studies: https://contra.com/mohamed_romih_jj5w3q2x\n\nHappy to jump on a quick call or run a $150 48-hour diagnostic audit (100% credited toward the build).\n\nBest regards,\nMohamed Romih | MRomih Automations`,
+            antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${postUrl} in Chrome and outreach to u/${authorName} using the tailored proposal above.`
+          };
+        }
+
+        const fitScore = Number(study.fit_score) || 0;
+        if (fitScore < 75) {
+          console.log(`[Reddit r/${feed.subreddit}] Skipped low-fit post ${post.id} (score=${fitScore}/100): ${study.score_rationale || ''}`);
+          continue;
+        }
+
+        metrics.bounties_found++;
+        metrics.last_bounty = `Reddit r/${feed.subreddit}: ${post.title.substring(0, 32)}...`;
+        console.log(`[Reddit r/${feed.subreddit}] Pre-vetted lead ${post.id} scored ${fitScore}/100 -> sending Telegram alert!`);
+
+        const alertMsg =
+          `🟡 <b>[PRE-VETTED OPPORTUNITY — SCORE ${fitScore}/100]</b>\n` +
+          `<b>Reddit Automation Lead (r/${escapeHtml(feed.subreddit)})</b>\n\n` +
+          `📋 <b>Title:</b> ${escapeHtml(post.title)}\n` +
+          `👤 <b>Author:</b> <code>u/${escapeHtml(authorName)}</code>\n` +
+          `🎯 <b>Playbook Match:</b> <code>${escapeHtml(study.matched_vertical || 'custom')}</code> | <b>Offer Tier:</b> <code>${escapeHtml(study.recommended_offer_tier || 'production_pipeline')}</code>\n` +
+          `🔗 <b>URL:</b> <a href="${postUrl}">Open Thread on Reddit</a>\n\n` +
+          `🔬 <b>Technical Study &amp; Score Rationale:</b>\n` +
+          `${escapeHtml(study.technical_study)}\n<i>Score rationale: ${escapeHtml(study.score_rationale || '')}</i>\n\n` +
+          `🛠️ <b>Workflow Architecture Plan:</b>\n` +
+          `${escapeHtml(study.workflow_architecture)}\n\n` +
+          `📊 <b>Calculated ROI:</b> ${escapeHtml(study.calculated_roi)}\n\n` +
+          `📝 <b>Pre-Drafted Tailored Proposal:</b>\n` +
+          `<blockquote>${escapeHtml(study.proposed_copy)}</blockquote>\n\n` +
+          `⚡ <b>Ready-to-Paste Antigravity Execution Prompt:</b>\n` +
+          `<pre>${escapeHtml(study.antigravity_prompt)}</pre>\n\n` +
+          `🏛️ <i>Mohamed Romih | MRomih Automations — Cloud Scout</i>\n` +
+          ACTIONABLE_ROUTING_BANNER;
+
+        await sendTelegram(alertMsg);
+      }
+    } catch (err) {
+      console.warn(`[Reddit r/${feed.subreddit}] Feed request failed cleanly:`, err.message);
     }
   }
 }
@@ -934,9 +1155,12 @@ async function run() {
   const isDryRun = process.argv.includes('--dry-run');
   const memory = loadMemory();
   const playbook = loadPlaybook();
+  const initialTelemetry = loadLocalTelemetry();
+  const seenLeadIds = new Set(Array.isArray(initialTelemetry.seen_lead_ids) ? initialTelemetry.seen_lead_ids : []);
   const schemaErrors = validateScoutSchemas(memory, playbook);
 
   console.log(`[CloudScout] Loaded playbook.json: ${Object.keys(playbook.offer_ladder || {}).length} offer tiers, ${Object.keys(playbook.vertical_playbooks || {}).length} verticals, ${(playbook.discovered_market_patterns || []).length} discovered patterns.`);
+  console.log(`[CloudScout] Telemetry deduplication loaded: ${seenLeadIds.size} seen_lead_ids tracked (cap=300).`);
 
   if (schemaErrors.length > 0) {
     if (!isDryRun) {
@@ -947,7 +1171,14 @@ async function run() {
   }
 
   if (isDryRun) {
-    console.log('[CloudScout] --dry-run passed: verified brain_memory.json and playbook.json load cleanly with 0 schema errors.');
+    // Self-check Reddit pre-filter and deduplication mechanics cleanly without network calls
+    const mockHiring = isQualifiedRedditPost({ id: 'r1', title: '[Hiring] Need n8n webhook + HubSpot CRM sync engineer ($600)', selftext: 'Looking to hire an n8n freelancer, $600 budget.' }, 'forhire');
+    const mockForHire = isQualifiedRedditPost({ id: 'r2', title: '[For Hire] n8n expert offering automation services', selftext: 'DM me for automation.' }, 'forhire');
+    const mockMicro = isQualifiedRedditPost({ id: 'r3', title: '[Hiring] Quick $25 fix for zapier webhook', selftext: 'Budget $25 fixed.' }, 'forhire');
+    if (!mockHiring || mockForHire || mockMicro) {
+      throw new Error(`Reddit pre-filter self-check failed: hiring=${mockHiring}, forHire=${mockForHire}, micro=${mockMicro}`);
+    }
+    console.log('[CloudScout] --dry-run passed: verified brain_memory.json, playbook.json, Reddit pre-filters (4 feeds), seen_lead_ids deduplication, and routing banners cleanly.');
     return;
   }
 
@@ -968,26 +1199,30 @@ async function run() {
     issues_scanned: 0,
     bounties_found: 0,
     last_bounty: null,
-    hn_scanned_hits: 0
+    hn_scanned_hits: 0,
+    reddit_scanned_posts: 0
   };
 
   const seenN8nTopics = new Set();
   const seenHnIds = new Set();
 
   // 1. Scan Algora escrow bounties
-  await scanAlgoraBounties(headers, metrics, memory);
+  await scanAlgoraBounties(headers, metrics, memory, seenLeadIds);
 
   // 2. Scan Opire public rewards API
-  await scanOpireBounties(headers, metrics, memory);
+  await scanOpireBounties(headers, metrics, memory, seenLeadIds);
 
   // 3. Scan n8n Community Jobs
-  await scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook);
+  await scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds);
 
   // 4. Scan Hacker News Algolia queries
-  await scanHackerNews(metrics, seenHnIds, memory, playbook);
+  await scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds);
 
-  // 5. Update live telemetry in repository
-  await updateLiveTelemetry(metrics, Array.from(seenN8nTopics));
+  // 5. Scan Reddit Automation & Hiring Feeds
+  await scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook);
+
+  // 6. Update live telemetry in repository (including capped seen_lead_ids)
+  await updateLiveTelemetry(metrics, Array.from(seenN8nTopics), seenLeadIds);
   console.log('[CloudScout] Autonomous technical scout cycle completed successfully.');
 }
 

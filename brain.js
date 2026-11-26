@@ -201,6 +201,7 @@ function savePlaybook(pb) {
 }
 
 const _sentHealthAlertKeys = new Set();
+const ACTIONABLE_ROUTING_BANNER = '📋 <b>NEXT STEP:</b> Paste this message to Gemini for your ready-to-run Antigravity prompt.';
 
 function formatHealthAlertHtml(component, issueSummary, errorDetails) {
   const safeComp = escapeHtml(component || 'Unknown Component');
@@ -212,7 +213,8 @@ function formatHealthAlertHtml(component, issueSummary, errorDetails) {
     `<b>Issue:</b> ${safeIssue}\n` +
     `<b>Timestamp (UTC):</b> <code>${new Date().toISOString()}</code>` +
     safeDetails +
-    `\n🛠️ <i>Immediate diagnostic review recommended (Watchdog Sentinel).</i>`
+    `\n🛠️ <i>Immediate diagnostic review recommended (Watchdog Sentinel).</i>\n\n` +
+    ACTIONABLE_ROUTING_BANNER
   );
 }
 
@@ -1097,7 +1099,8 @@ async function run() {
       knowledgeDistillationDue: governance.knowledgeDistillationDue,
       distillSignalCount: governance.distillSignalCount,
       systemHealthBaselines: memory.system_health_baselines?.overall_status,
-      schedules: Object.keys(governance.scheduleStatus)
+      dueBrowserSweeps: governance.dueBrowserSchedules.map(s => `${s.id} (${s.interval_days}d)`),
+      schedules: Object.fromEntries(Object.entries(governance.scheduleStatus).map(([k, s]) => [k, `${s.interval_days}d (due=${s.is_due})`]))
     });
     return;
   }
@@ -1494,19 +1497,35 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
     `💡 <b>Learned Insight:</b>\n` +
     `<i>"${escapeHtml(analysis.learned_insight)}"</i>\n\n`;
 
-  if (analysis.human_action_required && analysis.antigravity_prompt) {
+  const hasDueItems = Boolean(
+    analysis.human_action_required ||
+    governance.dueBrowserSchedules.length > 0 ||
+    governance.dueDeals.length > 0 ||
+    analysis.antigravity_prompt
+  );
+
+  if (hasDueItems) {
+    const dueSummary = analysis.action_reason ||
+      [
+        ...governance.dueBrowserSchedules.map(s => s.name),
+        ...governance.dueDeals.map(d => `${d.company} follow-up`)
+      ].join(', ');
     telegramMessage +=
       `🚨 <b>HUMAN + ANTIGRAVITY ACTION REQUIRED:</b>\n` +
-      `<b>Reason:</b> ${escapeHtml(analysis.action_reason)}\n\n` +
-      `⚡ <b>Ready-to-Use Antigravity Execution Prompt:</b>\n` +
-      `<pre>${escapeHtml(sanitizeClientCopy(analysis.antigravity_prompt))}</pre>\n\n`;
+      `<b>Reason:</b> ${escapeHtml(dueSummary)}\n\n`;
+    if (analysis.antigravity_prompt) {
+      telegramMessage +=
+        `⚡ <b>Ready-to-Use Antigravity Execution Prompt:</b>\n` +
+        `<pre>${escapeHtml(sanitizeClientCopy(analysis.antigravity_prompt))}</pre>\n\n`;
+    }
+    telegramMessage += `🏛️ <i>MRomih Automations — Executive Intelligence v2</i>\n${ACTIONABLE_ROUTING_BANNER}`;
   } else {
     telegramMessage +=
       `🟢 <b>ALL SYSTEMS OPERATIONAL (STANDBY)</b>\n` +
-      `<i>Zero human intervention required. Governance timers and background sentinels operating in the cloud.</i>\n\n`;
+      `<i>Governance timers and background sentinels operating in the cloud.</i>\n\n` +
+      `🏛️ <i>MRomih Automations — Executive Intelligence v2</i>\n` +
+      `<i>Zero human intervention required.</i>`;
   }
-
-  telegramMessage += `🏛️ <i>MRomih Automations — Executive Intelligence v2</i>`;
 
   await sendTelegramAlert(telegramMessage);
   console.log('✅ [CEO Brain] Executive Intelligence v2 cycle completed.');
