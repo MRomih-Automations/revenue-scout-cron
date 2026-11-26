@@ -8,18 +8,28 @@
   "qualified_bounties_found": 5,
   "last_bounty_title": "HN Lead: brudgers (web+scraping+automation)",
   "hn_scanned_hits": 40,
-  "last_ceo_brain_timestamp": "2026-11-25T20:38:03.947Z",
+  "last_ceo_brain_timestamp": "2026-11-26T09:57:04.660Z",
   "last_push_title": "Autonomous Standby",
   "n8n_topics_scanned": 8,
   "opire_rewards_scanned": 3,
   "human_escalation_active": false,
   "templates_in_lead_magnet": 3,
-  "active_governance_schedules": 4,
+  "active_governance_schedules": 5,
   "hn_signals_scanned": 8,
   "seen_n8n_topics": [
     330154,
     329465,
     329316,
     329131
-  ]
+  ],
+  "conversion_funnel": {
+    "proposals_sent": 2,
+    "replies_received": 0,
+    "calls_booked": 0,
+    "deals_won": 0,
+    "total_revenue_usd": 0,
+    "winning_angles": []
+  },
+  "telegram_last_update_id": 177823494,
+  "playbook_discovered_patterns": 3
 }
