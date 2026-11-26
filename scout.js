@@ -733,6 +733,16 @@ Output JSON:
   }
 }
 
+function hasExplicitHiringOrPayIntent(text) {
+  return /\b(hiring|looking to hire|paid help|need paid|budget|freelancer|contractor|seeking (?:a |an )?(?:freelancer|contractor|developer|engineer|expert|consultant|partner)|looking for (?:a |an )?(?:freelancer|contractor|developer|engineer|consultant|partner))\b|\[\s*hiring\s*\]/i.test(String(text || ''));
+}
+
+function isN8nDeveloperShowcase(text) {
+  const s = String(text || '').toLowerCase();
+  const showcasePattern = /\b(why i built|sharing (?:a|an|my)|i built (?:a|an|this)|built with n8n|open[- ]source|tutorial|check out my (?:repo|workflow|tool))\b|\[\s*for hire\s*\]/i.test(s);
+  return showcasePattern && !hasExplicitHiringOrPayIntent(s);
+}
+
 function isCommercialN8nTopic(t, feedKind = 'jobs') {
   if (!t || !t.title) return false;
   if (t.id === 941 || t.pinned === true) return false;
@@ -749,6 +759,7 @@ function isCommercialN8nTopic(t, feedKind = 'jobs') {
     return false;
   }
   if (feedKind === 'jobs') return true;
+  if (isN8nDeveloperShowcase(t.title)) return false;
 
   // High-intent triggers inside /latest.json (hiring, agency partners, Zapier/Make bill-shock migrations, queue mode, broken webhooks/CRM)
   return (
@@ -872,6 +883,11 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, se
 
       seenN8nTopics.add(topic.id);
       if (seenLeadIds) seenLeadIds.add(n8nLeadId);
+
+      if (kind !== 'jobs' && isN8nDeveloperShowcase(`${fullTopic.title} ${textContent}`)) {
+        console.log(`[n8n Community] Skipping developer showcase/tutorial topic #${topic.id}: ${fullTopic.title}`);
+        continue;
+      }
 
       // Attribute dynamic query hit telemetry cleanly
       const combinedText = `${topic.title} ${textContent}`;
@@ -1378,9 +1394,19 @@ async function run() {
     const mockHnWantHired = isCommercialHnHit({ objectID: 'hn2', story_title: 'Ask HN: Who wants to be hired? (November 2026)', comment_text: 'Available for hire n8n developer.' });
     const mockN8nMigration = isCommercialN8nTopic({ id: 999001, title: 'Zapier bill shock migrating 40 zaps to self-hosted n8n queue mode' }, 'latest');
     const mockN8nBasic = isCommercialN8nTopic({ id: 999002, title: 'How do I format a date in set node?' }, 'latest');
+    const mockN8nShowcase1 = isCommercialN8nTopic({ id: 999003, title: 'Why I built a self-hosted n8n queue mode monitor (open-source)' }, 'latest');
+    const mockN8nShowcase2 = isCommercialN8nTopic({ id: 999004, title: 'Sharing a Zapier migration tutorial I built with n8n' }, 'latest');
+    const mockN8nBodyShowcase = isN8nDeveloperShowcase('Why I built a free webhook helper tutorial for n8n');
+    const mockN8nShowcaseHiringOverride = isCommercialN8nTopic({ id: 999005, title: 'Hiring freelancer: I built a Zapier migration MVP with n8n, need paid help' }, 'latest');
 
-    if (!mockHiring || mockForHire || mockMicro || !mockHnWhoIsHiring || mockHnWantHired || !mockN8nMigration || mockN8nBasic) {
-      throw new Error(`Scout pre-filter self-check failed: hiring=${mockHiring}, forHire=${mockForHire}, micro=${mockMicro}, hnHiring=${mockHnWhoIsHiring}, hnWantHired=${mockHnWantHired}, n8nMig=${mockN8nMigration}, n8nBasic=${mockN8nBasic}`);
+    if (
+      !mockHiring || mockForHire || mockMicro || !mockHnWhoIsHiring || mockHnWantHired ||
+      !mockN8nMigration || mockN8nBasic || mockN8nShowcase1 || mockN8nShowcase2 ||
+      !mockN8nBodyShowcase || !mockN8nShowcaseHiringOverride
+    ) {
+      throw new Error(
+        `Scout pre-filter self-check failed: hiring=${mockHiring}, forHire=${mockForHire}, micro=${mockMicro}, hnHiring=${mockHnWhoIsHiring}, hnWantHired=${mockHnWantHired}, n8nMig=${mockN8nMigration}, n8nBasic=${mockN8nBasic}, show1=${mockN8nShowcase1}, show2=${mockN8nShowcase2}, bodyShow=${mockN8nBodyShowcase}, showHire=${mockN8nShowcaseHiringOverride}`
+      );
     }
     console.log('[CloudScout] --dry-run passed: verified brain_memory.json, playbook.json (dynamic_search_queries + winning_pitch_rules), HN/n8n/Reddit pre-filters, seen_lead_ids deduplication, and routing banners cleanly.');
     return;
