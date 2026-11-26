@@ -305,13 +305,13 @@
     "topic_1"
   ],
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-26T15:48:37.643Z",
-  "heartbeat_unix": 1795708117643,
+  "last_run_timestamp": "2026-11-26T15:54:33.693Z",
+  "heartbeat_unix": 1795708473693,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
-  "issues_scanned": 3,
-  "qualified_bounties_found": 1,
+  "issues_scanned": 72,
+  "qualified_bounties_found": 0,
   "last_bounty_title": "Reddit r/automation: [Hiring] Need n8n + HubSpot webh...",
-  "hn_scanned_hits": 0,
-  "reddit_scanned_posts": 3
+  "hn_scanned_hits": 40,
+  "reddit_scanned_posts": 0
 }
