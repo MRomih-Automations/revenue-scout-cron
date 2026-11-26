@@ -10,50 +10,50 @@
     328934
   ],
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-26T19:56:10.891Z",
-  "heartbeat_unix": 1795722970891,
+  "last_run_timestamp": "2026-11-26T20:47:07.255Z",
+  "heartbeat_unix": 1795726027255,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
-  "issues_scanned": 138,
+  "issues_scanned": 139,
   "qualified_bounties_found": 0,
   "last_bounty_title": "n8n Community #328934: Why I built a dedicated Apify Ac...",
-  "hn_scanned_hits": 46,
+  "hn_scanned_hits": 47,
   "reddit_scanned_posts": 0,
   "query_stats": {
     "\"n8n\" OR \"Make\" automation agency partner": {
       "query": "\"n8n\" OR \"Make\" automation agency partner",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 4,
-      "last_run_at": "2026-11-26T19:56:10.891Z"
+      "zero_hit_runs": 5,
+      "last_run_at": "2026-11-26T20:47:07.255Z"
     },
     "zapier OR make migration n8n": {
       "query": "zapier OR make migration n8n",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 4,
-      "last_run_at": "2026-11-26T19:56:10.891Z"
+      "zero_hit_runs": 5,
+      "last_run_at": "2026-11-26T20:47:07.255Z"
     },
     "n8n self-hosted queue mode webhook": {
       "query": "n8n self-hosted queue mode webhook",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 4,
-      "last_run_at": "2026-11-26T19:56:10.891Z"
+      "zero_hit_runs": 5,
+      "last_run_at": "2026-11-26T20:47:07.255Z"
     },
     "webhook idempotency OR Airtable HubSpot sync freelancer": {
       "query": "webhook idempotency OR Airtable HubSpot sync freelancer",
       "hits": 0,
       "qualified_leads": 0,
-      "zero_hit_runs": 5,
-      "last_run_at": "2026-11-26T19:56:10.891Z"
+      "zero_hit_runs": 6,
+      "last_run_at": "2026-11-26T20:47:07.255Z"
     },
     "AI lead triage OR voice agent developer": {
       "query": "AI lead triage OR voice agent developer",
       "hits": 1,
       "qualified_leads": 0,
-      "zero_hit_runs": 4,
-      "last_run_at": "2026-11-26T19:56:10.891Z"
+      "zero_hit_runs": 5,
+      "last_run_at": "2026-11-26T20:47:07.255Z"
     }
   }
 }
