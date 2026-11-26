@@ -10,8 +10,8 @@
     328934
   ],
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-26T17:52:29.186Z",
-  "heartbeat_unix": 1795715549186,
+  "last_run_timestamp": "2026-11-26T18:48:37.361Z",
+  "heartbeat_unix": 1795718917361,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
   "issues_scanned": 139,
@@ -24,36 +24,36 @@
       "query": "\"n8n\" OR \"Make\" automation agency partner",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 2,
-      "last_run_at": "2026-11-26T17:52:29.186Z"
+      "zero_hit_runs": 3,
+      "last_run_at": "2026-11-26T18:48:37.361Z"
     },
     "zapier OR make migration n8n": {
       "query": "zapier OR make migration n8n",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 2,
-      "last_run_at": "2026-11-26T17:52:29.186Z"
+      "zero_hit_runs": 3,
+      "last_run_at": "2026-11-26T18:48:37.361Z"
     },
     "n8n self-hosted queue mode webhook": {
       "query": "n8n self-hosted queue mode webhook",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 2,
-      "last_run_at": "2026-11-26T17:52:29.186Z"
+      "zero_hit_runs": 3,
+      "last_run_at": "2026-11-26T18:48:37.361Z"
     },
     "webhook idempotency OR Airtable HubSpot sync freelancer": {
       "query": "webhook idempotency OR Airtable HubSpot sync freelancer",
       "hits": 0,
       "qualified_leads": 0,
-      "zero_hit_runs": 3,
-      "last_run_at": "2026-11-26T17:52:29.186Z"
+      "zero_hit_runs": 4,
+      "last_run_at": "2026-11-26T18:48:37.361Z"
     },
     "AI lead triage OR voice agent developer": {
       "query": "AI lead triage OR voice agent developer",
       "hits": 1,
       "qualified_leads": 0,
-      "zero_hit_runs": 2,
-      "last_run_at": "2026-11-26T17:52:29.186Z"
+      "zero_hit_runs": 3,
+      "last_run_at": "2026-11-26T18:48:37.361Z"
     }
   }
 }
