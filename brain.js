@@ -30,7 +30,7 @@ if (fs.existsSync(envPath)) {
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '1048991933';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GH_PAT = process.env.GH_PAT;
+const GH_PAT = process.env.GH_PAT || process.env.GITHUB_TOKEN;
 
 function escapeHtml(text) {
   if (!text) return '';

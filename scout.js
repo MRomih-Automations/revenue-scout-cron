@@ -34,7 +34,7 @@ if (fs.existsSync(envPath)) {
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '1048991933';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GH_PAT = process.env.GH_PAT;
+const GH_PAT = process.env.GH_PAT || process.env.GITHUB_TOKEN;
 
 function escapeHtml(text) {
   if (!text) return '';
@@ -273,9 +273,14 @@ async function callGemini(prompt) {
 }
 
 async function updateLiveTelemetry(metrics, seenN8nTopics) {
-  const token = GH_PAT;
+  const token = GH_PAT || process.env.GITHUB_TOKEN;
   if (!token) {
-    console.log('[Telemetry] No GH_PAT found, skipping repository telemetry push.');
+    console.log('[Telemetry] Missing GH_PAT and GITHUB_TOKEN, skipping repository telemetry push.');
+    await sendHealthAlert(
+      'Cloud Scout Telemetry Persistence',
+      'No GitHub authentication token found (GH_PAT or GITHUB_TOKEN)',
+      'Set GH_PAT secret or grant permissions: contents: write to scout_cron.yml'
+    );
     return;
   }
 
@@ -284,6 +289,7 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
 
   try {
     let sha = null;
+    let existingData = {};
     let existingSeen = [];
     const existing = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/telemetry.json`, {
       headers: { 'Authorization': 'token ' + token, 'User-Agent': 'CloudScout', 'Accept': 'application/vnd.github.v3+json' }
@@ -293,13 +299,17 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
       sha = data.sha;
       try {
         const parsed = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
-        if (Array.isArray(parsed.seen_n8n_topics)) existingSeen = parsed.seen_n8n_topics;
+        if (parsed && typeof parsed === 'object') {
+          existingData = parsed;
+          if (Array.isArray(parsed.seen_n8n_topics)) existingSeen = parsed.seen_n8n_topics;
+        }
       } catch (e) {}
     }
 
     const mergedSeen = Array.from(new Set([...existingSeen, ...(seenN8nTopics || [])])).slice(-100);
 
     const payload = {
+      ...existingData,
       status: 'HEALTHY',
       last_run_timestamp: new Date().toISOString(),
       heartbeat_unix: Date.now(),
@@ -307,14 +317,17 @@ async function updateLiveTelemetry(metrics, seenN8nTopics) {
       provider: 'GitHub Actions Enterprise Cloud',
       issues_scanned: metrics.issues_scanned || 0,
       qualified_bounties_found: metrics.bounties_found || 0,
-      last_bounty_title: metrics.last_bounty || null,
+      last_bounty_title: metrics.last_bounty || existingData.last_bounty_title || null,
       hn_scanned_hits: metrics.hn_scanned_hits || 0,
       seen_n8n_topics: mergedSeen
     };
 
+    const jsonStr = JSON.stringify(payload, null, 2);
+    fs.writeFileSync(path.join(__dirname, 'telemetry.json'), jsonStr, 'utf8');
+
     const body = {
       message: 'telemetry: sync live cloud scout heartbeat [skip ci]',
-      content: Buffer.from(JSON.stringify(payload, null, 2)).toString('base64')
+      content: Buffer.from(jsonStr).toString('base64')
     };
     if (sha) body.sha = sha;
 
