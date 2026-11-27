@@ -1,6 +1,6 @@
 {
   "schema_version": "2.1.0",
-  "last_updated": "2026-11-27T09:55:29.391Z",
+  "last_updated": "2026-11-27T10:53:00.000Z",
   "agency": {
     "name": "MRomih Automations",
     "founder": "Mohamed Romih",
@@ -43,7 +43,7 @@
       "source": "daily_market_study",
       "title": "Why Your n8n AI Agent Workflow Says 'Green' But Does Nothing (And How to Fix It)",
       "post_copy": "One of the most frustrating bottlenecks in production automation is an n8n workflow that returns a 'green' success status yet passes zero actionable data downstream to your CRM or database. When integrating AI agents with rigid systems like Airtable, quiet node drop-offs or unhandled tool-inference timeouts will silently torch your lead conversion.\n\nThe secret is building explicit validation checkpoints and dead-letter queues into every multi-step tool execution loop before marking a job complete.\n\nI put together a production-ready template showing how to build bulletproof lead routing and triage handling in n8n:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nMohamed Romih | MRomih Automations",
-      "status": "STAGED_FOR_LINKEDIN"
+      "status": "SKIPPED"
     }
   ],
   "system_health_baselines": {
@@ -141,19 +141,19 @@
     "fiverr_briefs_and_gigs_sweep": {
       "name": "Fiverr Briefs & Gigs Sweep",
       "interval_days": 2,
-      "last_checked": "2026-11-25T14:37:00.000Z",
+      "last_checked": "2026-11-27T10:53:00.000Z",
       "description": "Every 48h check for matched buyer briefs, inbox leads, and gig conversion metrics in logged-in Chrome without altering indexed gig titles/tags."
     },
     "contra_free_sweep": {
       "name": "Contra Free-Tier Jobs Sweep",
       "interval_days": 2,
-      "last_checked": "2026-11-25T14:00:00.000Z",
+      "last_checked": "2026-11-27T10:53:00.000Z",
       "description": "Every 48h scan new free-tier automation, n8n, and AI briefs on Contra and apply with public repo and case studies."
     },
     "linkedin_outreach": {
       "name": "LinkedIn Content & Founder Outreach",
       "interval_days": 2,
-      "last_checked": "2026-11-25T19:30:00.000Z",
+      "last_checked": "2026-11-27T10:53:00.000Z",
       "description": "Every 48h publish staged demo post or send targeted founder connections in automation/AI spaces."
     },
     "github_lead_magnet_expansion": {

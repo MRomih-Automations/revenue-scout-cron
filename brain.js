@@ -31,6 +31,8 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '1048991933';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GH_PAT = process.env.GH_PAT || process.env.GITHUB_TOKEN;
+// Disable public LinkedIn post staging & alerts while keeping direct founder outreach schedules active.
+const ENABLE_LINKEDIN_POST_STAGING = false;
 
 function escapeHtml(text) {
   if (!text) return '';
@@ -1286,8 +1288,7 @@ GitHub Trending/Updated Repos: ${JSON.stringify(githubRepos.slice(0, 6), null, 2
 n8n Community Threads: ${JSON.stringify(allN8n.slice(0, 8), null, 2)}
 
 Extract:
-1. A concise new market research note capturing recurring pain points, stacks, and buyer urgency.
-2. Whether a high-frequency buyer bottleneck exists today suitable for a LinkedIn teardown pointing to https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit (signed strictly "Mohamed Romih | MRomih Automations", NO robotic AI titles).
+1. A concise new market research note capturing recurring pain points, stacks, and buyer urgency.${ENABLE_LINKEDIN_POST_STAGING ? '\n2. Whether a high-frequency buyer bottleneck exists today suitable for a LinkedIn teardown pointing to https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit (signed strictly "Mohamed Romih | MRomih Automations", NO robotic AI titles).' : ''}
 
 Output strictly valid JSON:
 {
@@ -1295,11 +1296,11 @@ Output strictly valid JSON:
   "recurring_problems": "1-2 sentences capturing recurring buyer failures observed today",
   "tech_stacks": "Comma-separated stack list",
   "pricing_benchmarks": "Realistic target tier/rate ($150 audit / $500-$1,500+ / $45-$65/hr)",
-  "what_i_learned_today": "1-2 concise sentences summarizing concrete demand trends observed across today's sources",
+  "what_i_learned_today": "1-2 concise sentences summarizing concrete demand trends observed across today's sources"${ENABLE_LINKEDIN_POST_STAGING ? `,
   "high_frequency_bottleneck": null or {
     "title": "LinkedIn teardown hook title",
     "post_copy": "Practical 4-6 line architecture teardown ending with https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and signed 'Mohamed Romih | MRomih Automations'"
-  }
+  }` : ''}
 }`;
       const raw = await callGemini(studyPrompt);
       studySynthesis = safeJsonParse(raw);
@@ -1317,7 +1318,7 @@ Output strictly valid JSON:
       tech_stacks: 'n8n, Webhooks, Redis Queue Mode, Airtable, HubSpot, AI Lead Triage',
       pricing_benchmarks: '$150 Credited Audit | $500–$850 turnkey pipeline | $45–$65/hr',
       what_i_learned_today: `Analyzed ${totalSignals} live external signals (HN=${hnSignals.length}, GitHub=${githubRepos.length}, n8n=${allN8n.length}); recurring friction centers on silent webhook failures and workflow scaling.`,
-      high_frequency_bottleneck: hasPainPattern ? {
+      high_frequency_bottleneck: (ENABLE_LINKEDIN_POST_STAGING && hasPainPattern) ? {
         title: `Why ${topThread.slice(0, 48)} Fails Silently (And Our 3-Node n8n Fix)`,
         post_copy: `Most automation builds look great in demos—then drop leads or duplicate CRM rows the moment an API rate-limits or retries.\n\nAcross today's n8n and engineering threads, the same reliability gap keeps costing teams real revenue: missing HMAC verification, missing transaction-ID idempotency, and zero dead-letter alerting.\n\nWe open-sourced our production pattern (sub-2.4s webhook triage + validation + error routing):\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nMohamed Romih | MRomih Automations`
       } : null
@@ -1352,11 +1353,12 @@ Output strictly valid JSON:
     n8n_latest: n8nLatest,
     topic: studySynthesis.topic,
     what_i_learned_today: sanitizeClientCopy(studySynthesis.what_i_learned_today || studySynthesis.recurring_problems),
-    high_frequency_bottleneck: studySynthesis.high_frequency_bottleneck || null
+    high_frequency_bottleneck: ENABLE_LINKEDIN_POST_STAGING ? (studySynthesis.high_frequency_bottleneck || null) : null
   };
 }
 
 function stageStudiedLinkedInPost(memory, bottleneck) {
+  if (!ENABLE_LINKEDIN_POST_STAGING) return null;
   if (!bottleneck || !bottleneck.post_copy) return null;
   if (!Array.isArray(memory.staged_linkedin_posts)) memory.staged_linkedin_posts = [];
 
@@ -2321,11 +2323,13 @@ async function run() {
   const dealMomentum = scoreDealMomentum(memory);
   const studyResult = await studyExternalMarketSignals(memory, n8nJobs);
   const selfCapabilities = await evaluateSelfCapabilities(memory, playbook, telemetry, pacing);
-  const stagedStudyPost = studyResult.high_frequency_bottleneck
+  const stagedStudyPost = (ENABLE_LINKEDIN_POST_STAGING && studyResult.high_frequency_bottleneck)
     ? stageStudiedLinkedInPost(memory, studyResult.high_frequency_bottleneck)
     : null;
 
-  const pendingLinkedInPosts = (memory.staged_linkedin_posts || []).filter(p => p.status === 'STAGED_FOR_LINKEDIN');
+  const pendingLinkedInPosts = ENABLE_LINKEDIN_POST_STAGING
+    ? (memory.staged_linkedin_posts || []).filter(p => p.status === 'STAGED_FOR_LINKEDIN')
+    : [];
 
   // STAGE A: Deep Study, 3-Horizon Strategic Reasoning & ROI Calculation Prompt
   const prompt = `
@@ -2367,7 +2371,7 @@ Agency Memory Ledgers:
 Governance Schedules Status (Current UTC: ${new Date().toISOString()}):
 ${Object.entries(governance.scheduleStatus).map(([k, s]) => `  * ${s.name} (${k}): Every ${s.interval_days}d | Last: ${s.last_checked} | Next Due: ${s.next_due} | Due Now: ${s.is_due ? 'YES ⚠️' : 'NO ✅'} (${s.days_since}d ago)`).join('\n')}
 - Due Browser Platform Actions: ${governance.dueBrowserSchedules.length > 0 ? governance.dueBrowserSchedules.map(s => s.name).join(', ') : 'None'}
-- Lead Magnet Expansion Due: ${governance.leadMagnetDue ? 'YES ⚠️ (Trigger Cloud Builder from Market Research Pain Points + Stage LinkedIn Showcase Post)' : 'NO ✅'} (Repo currently has ${governance.repoTemplateCount} templates: ${JSON.stringify(repoTemplates)})
+- Lead Magnet Expansion Due: ${governance.leadMagnetDue ? `YES ⚠️ (Trigger Cloud Builder from Market Research Pain Points${ENABLE_LINKEDIN_POST_STAGING ? ' + Stage LinkedIn Showcase Post' : ''})` : 'NO ✅'} (Repo currently has ${governance.repoTemplateCount} templates: ${JSON.stringify(repoTemplates)})
 - Active Deals Follow-Up Due Now: ${governance.dueDeals.length > 0 ? governance.dueDeals.map(d => `${d.company} (${d.contact_person})`).join(', ') : 'None (Upcoming: ' + (governance.upcomingDeals.join(', ') || 'None') + ')'}
 
 Live Feeds Aggregated:
@@ -2383,8 +2387,8 @@ Executive Intelligence v2 — 3-Horizon Strategic Reasoning, Self-Reflection & 5
 - Horizon 2 — This Week (Operational): Address primary North Star bottleneck ("${pacing.primary_bottleneck}") and advance active A/B experiment ("${memory.active_experiment?.id || 'exp_001'}").
 - Horizon 3 — This Month (Strategic): Analyze recurring client pain points across market_research_notes to productize into new Fiverr/Contra packages or blueprints.
 - Self-Reflection & Skill-Request Protocol: Review "Self-Reflection Capability & Blind-Spot Audit" above. Output "skill_or_knowledge_request.needed": true ONLY when a high-leverage, non-duplicate capability gap exists (e.g., blocked scanner feed needing Apps Script/RSS bridge, missing vertical blueprint in revenue-engine/blueprints/, or missing closing/delivery tooling). NEVER repeat any item already listed in prior_requested_upgrades.
-- Demand-Driven Asset Creation: Whenever github_lead_magnet_expansion is due (or repo has <3 templates), set "new_template_needed": true, select a template topic DIRECTLY from recurring buyer pain points in market_research_notes, supply complete workflow_json (real n8n nodes), realistic sample_test_run_md (2 payloads + traces), comprehensive readme_content, AND generate a ready-to-publish "linkedin_showcase_post" signed as "Mohamed Romih | MRomih Automations".
-- Human Escalation Gate: Set "human_action_required": true ONLY if a browser platform timer is due, a staged LinkedIn post is ready to publish, a deal follow-up has elapsed, a high-intent client opportunity requires PC application, or "skill_or_knowledge_request.needed" is true. Otherwise set false with "Zero human intervention required".
+- Demand-Driven Asset Creation: Whenever github_lead_magnet_expansion is due (or repo has <3 templates), set "new_template_needed": true, select a template topic DIRECTLY from recurring buyer pain points in market_research_notes, supply complete workflow_json (real n8n nodes), realistic sample_test_run_md (2 payloads + traces)${ENABLE_LINKEDIN_POST_STAGING ? ', comprehensive readme_content, AND generate a ready-to-publish "linkedin_showcase_post" signed as "Mohamed Romih | MRomih Automations".' : ', and comprehensive readme_content.'}
+- Human Escalation Gate: Set "human_action_required": true ONLY if a browser platform timer is due, ${ENABLE_LINKEDIN_POST_STAGING ? 'a staged LinkedIn post is ready to publish, ' : ''}a deal follow-up has elapsed, a high-intent client opportunity requires PC application, or "skill_or_knowledge_request.needed" is true. Otherwise set false with "Zero human intervention required".
 - Identity & Sign-Offs: Always sign proposals, posts, and outreach strictly as "Mohamed Romih | MRomih Automations". Never use robotic AI self-titles.
 
 Respond strictly in valid JSON format:
@@ -2426,11 +2430,11 @@ Respond strictly in valid JSON format:
     "sample_test_run_md": "# Sample Test Run\\n\\n### Payload 1\\n...\\n### Output 1\\n...",
     "readme_content": "# README\\n\\nSetup and testing documentation..."
   },
-  "linkedin_showcase_post": null or {
+  "linkedin_showcase_post": ${ENABLE_LINKEDIN_POST_STAGING ? `null or {
     "title": "Post Hook Title",
     "template_slug": "matching-slug",
     "post_copy": "Ready-to-publish LinkedIn post highlighting pain point solved, link to github.com/MRomih-Automations/n8n-ai-lead-triage-kit, signed 'Mohamed Romih | MRomih Automations'."
-  },
+  }` : 'null'},
   "human_action_required": true or false,
   "action_reason": "Explanation of why human action is or is not required",
   "governance_timers_triggered": ["schedule_id_if_triggered"],
@@ -2574,25 +2578,27 @@ Fix all issues immediately and return the revised deliverable in valid JSON:
           memory.platform_schedules.github_lead_magnet_expansion.last_checked = new Date().toISOString();
         }
 
-        if (!Array.isArray(memory.staged_linkedin_posts)) memory.staged_linkedin_posts = [];
-        const rawPost = analysis.linkedin_showcase_post;
-        const postCopy = sanitizeClientCopy(
-          (rawPost && rawPost.post_copy)
-            ? rawPost.post_copy
-            : `Most teams lose deals silently when webhooks fail or records duplicate.\n\nI just open-sourced a production-ready n8n template: "${tmpl.name}" — ${tmpl.summary || 'engineered for resilience, deduplication, and clean CRM syncing'}.\n\nInspect the JSON workflow & test payloads here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit/tree/main/templates/${slug}\n\nMohamed Romih | MRomih Automations`
-        );
-        memory.staged_linkedin_posts.push({
-          id: `li_${slug}_${Date.now()}`,
-          created_at: new Date().toISOString(),
-          template_slug: slug,
-          title: (rawPost && rawPost.title) ? rawPost.title : `Showcase: ${tmpl.name}`,
-          post_copy: postCopy,
-          status: 'STAGED_FOR_LINKEDIN'
-        });
-        if (memory.staged_linkedin_posts.length > 10) {
-          memory.staged_linkedin_posts = memory.staged_linkedin_posts.slice(-10);
+        if (ENABLE_LINKEDIN_POST_STAGING) {
+          if (!Array.isArray(memory.staged_linkedin_posts)) memory.staged_linkedin_posts = [];
+          const rawPost = analysis.linkedin_showcase_post;
+          const postCopy = sanitizeClientCopy(
+            (rawPost && rawPost.post_copy)
+              ? rawPost.post_copy
+              : `Most teams lose deals silently when webhooks fail or records duplicate.\n\nI just open-sourced a production-ready n8n template: "${tmpl.name}" — ${tmpl.summary || 'engineered for resilience, deduplication, and clean CRM syncing'}.\n\nInspect the JSON workflow & test payloads here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit/tree/main/templates/${slug}\n\nMohamed Romih | MRomih Automations`
+          );
+          memory.staged_linkedin_posts.push({
+            id: `li_${slug}_${Date.now()}`,
+            created_at: new Date().toISOString(),
+            template_slug: slug,
+            title: (rawPost && rawPost.title) ? rawPost.title : `Showcase: ${tmpl.name}`,
+            post_copy: postCopy,
+            status: 'STAGED_FOR_LINKEDIN'
+          });
+          if (memory.staged_linkedin_posts.length > 10) {
+            memory.staged_linkedin_posts = memory.staged_linkedin_posts.slice(-10);
+          }
+          builderReport += `\n• Staged LinkedIn showcase post for next outreach window.`;
         }
-        builderReport += `\n• Staged LinkedIn showcase post for next outreach window.`;
       }
     } else {
       console.warn(`⚠️ [QA Critic Aborted] Template failed QA criteria with score ${qaScore}/10. Commit aborted.`);
