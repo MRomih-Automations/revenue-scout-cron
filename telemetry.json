@@ -12,12 +12,12 @@
     328934
   ],
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-27T14:14:20.152Z",
-  "heartbeat_unix": 1795788860152,
+  "last_run_timestamp": "2026-11-27T14:21:35.032Z",
+  "heartbeat_unix": 1795789295032,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
-  "issues_scanned": 169,
-  "qualified_bounties_found": 1,
+  "issues_scanned": 199,
+  "qualified_bounties_found": 0,
   "last_bounty_title": "Make Community #120682: Integration from WPForms to Caps...",
   "hn_scanned_hits": 47,
   "reddit_scanned_posts": 0,
@@ -26,22 +26,22 @@
       "query": "\"n8n\" OR \"Make\" automation agency partner",
       "hits": 3,
       "qualified_leads": 2,
-      "zero_hit_runs": 0,
-      "last_run_at": "2026-11-27T14:14:20.152Z"
+      "zero_hit_runs": 22,
+      "last_run_at": "2026-11-27T14:21:35.031Z"
     },
     "zapier OR make migration n8n": {
       "query": "zapier OR make migration n8n",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 27,
-      "last_run_at": "2026-11-27T14:14:20.152Z"
+      "zero_hit_runs": 28,
+      "last_run_at": "2026-11-27T14:21:35.031Z"
     },
     "n8n self-hosted queue mode webhook": {
       "query": "n8n self-hosted queue mode webhook",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 27,
-      "last_run_at": "2026-11-27T14:14:20.152Z"
+      "zero_hit_runs": 28,
+      "last_run_at": "2026-11-27T14:21:35.031Z"
     }
   },
   "last_ceo_brain_timestamp": "2026-11-27T09:55:29.392Z",
