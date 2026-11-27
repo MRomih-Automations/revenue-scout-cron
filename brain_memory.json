@@ -205,6 +205,23 @@
         "https://community.make.com/t/airtable-automation-developer-needed/120066"
       ],
       "duplicate_check_note": "Confirmed exact duplicate cross-post on Make Community #120066 (@Alex_Gayton56, same Airtable form appkK1MZ2cLhJYQlR/pagE4pCmCjCzloG9u/form, 0 replies by author, still open); zero duplicate outreach sent (2026-11-27)."
+    },
+    {
+      "id": "karene_wpforms_capsule_120682",
+      "company": "KarenE client (event management)",
+      "contact_person": "KarenE",
+      "source": "Make Community Hire Help #120682",
+      "source_url": "https://community.make.com/t/integration-from-wpforms-to-capsule-crm/120682",
+      "application_method": "make_community_thread_reply",
+      "role": "Make.com WPForms Pro to Capsule CRM Integration",
+      "budget": "not_stated",
+      "status": "PROPOSAL_SENT",
+      "submitted_at": "2026-11-27T14:45:47Z",
+      "follow_up_due_at": "2026-11-29T14:45:47Z",
+      "follow_up_staged": true,
+      "heat_score": 92,
+      "proposal_copy": "Hi Karen,\n\nI can help you build and structure these Make.com scenarios connecting WPForms Pro to Capsule CRM cleanly—handling contact lookup, update-or-create logic, tagging, linking related contacts, and your post-event field cleanup scenario.\n\nA few things I will build in from the start:\n\n- Dedup/update-or-create on email: Search Capsule first, update if found, create if not—with contact linking handled in the same flow.\n- Transpond-safe tagging: Append new tags without wiping existing ones, so your Transpond automations (project setup) fire reliably without needing a separate Capsule create project step.\n- Post-event cleanup scenario: A clean scheduled run to clear down event fields once each event wraps up.\n- Modular structure: Built so duplicating everything for next year's events—or your early 2027 membership/conference Capsule instance—takes minutes instead of a rebuild.\n\nGiven your volume (~200 registrations per event with an initial flurry), I'll also wire in an error alert so you're notified immediately if any submission fails before reaching Capsule.\n\nIf you'd like a low-risk way to kick off, I offer a fixed  48-hour Diagnostic Audit & Setup Kickoff (100% credited toward the full build, typically - fixed depending on final cleanup and Transpond logic):\nhttps://contra.com/s/P3OLWZcP-48-hour-n8n-make-workflow-emergency-fix-and-diagnostic-audit\n\nYou can also view my automation profile and live workflow demo here:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nHappy to review your WPForms field mapping and Capsule CRM tagging rules whenever you're ready—feel free to reply here or message me directly.\n\nBest regards,\nMohamed Romih | MRomih Automations",
+      "notes": "Thread has ~10 competitors; pinchstudio quoted /3 days; Guzen quoted -60/hr. Karen actively replied 11 mins before our inspection. No budget stated. Future scope: separate Capsule instance for membership/conferences in early 2027. Reply posted as post #15 on thread #120682."
     }
   ],
   "published_templates": [
