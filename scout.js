@@ -5,8 +5,10 @@
  * Scans:
  * 1. Algora USD Escrow Bounties (< 60 days, 0 competing PRs)
  * 2. Opire USD Bounties (verified open, 0 competing PRs, non-token)
- * 3. n8n Community Jobs (https://community.n8n.io/c/jobs/13.json) with full post extraction
- * 4. Hacker News Algolia API (n8n, web scraping automation contract/hiring posts)
+ * 3. n8n Community Jobs & Commercial Signals (/c/jobs/18.json, /c/jobs/13.json, /latest.json)
+ * 4. Make Community Hire Help & Commercial Signals (/c/hire-a-pro/hire-help/74.json, /latest.json)
+ * 5. Hacker News Algolia API (n8n, Make/Zapier migration, scraping contract/hiring posts)
+ * 6. Reddit Automation & Hiring Feeds (oauth.reddit.com when configured, public JSON fallback)
  *
  * Autonomy Mandate:
  * Completes 100% of technical requirement study, workflow architecture planning,
@@ -35,6 +37,9 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '1048991933';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GH_PAT = process.env.GH_PAT || process.env.GITHUB_TOKEN;
+const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID;
+const REDDIT_CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET;
+const REDDIT_USER_AGENT = process.env.REDDIT_USER_AGENT || 'linux:MRomihAutomations-RevenueScout:v2.0 (by /u/MRomihAutomations)';
 
 function escapeHtml(text) {
   if (!text) return '';
@@ -430,6 +435,7 @@ async function updateLiveTelemetry(metrics, seenN8nTopics, seenLeadIds, querySta
       last_bounty_title: metrics.last_bounty || existingData.last_bounty_title || null,
       hn_scanned_hits: metrics.hn_scanned_hits || 0,
       reddit_scanned_posts: metrics.reddit_scanned_posts || 0,
+      make_scanned_topics: metrics.make_scanned_topics || 0,
       seen_n8n_topics: mergedSeen,
       seen_lead_ids: mergedLeadIds,
       query_stats: mergedQueryStats
@@ -733,40 +739,114 @@ Output JSON:
   }
 }
 
+const DISCOURSE_PLATFORMS = {
+  n8n: {
+    platformKey: 'n8n',
+    label: 'n8n Community',
+    baseUrl: 'https://community.n8n.io',
+    leadPrefix: 'n8n_',
+    feeds: [
+      { kind: 'jobs', url: 'https://community.n8n.io/c/jobs/18.json' },
+      { kind: 'jobs', url: 'https://community.n8n.io/c/jobs/13.json' },
+      { kind: 'latest', url: 'https://community.n8n.io/latest.json' }
+    ],
+    excludedTopicIds: new Set([941]),
+    excludedCategoryIds: new Set(),
+    jobsCategoryIds: new Set([13, 18])
+  },
+  make: {
+    platformKey: 'make',
+    label: 'Make Community',
+    baseUrl: 'https://community.make.com',
+    leadPrefix: 'make_',
+    feeds: [
+      { kind: 'jobs', url: 'https://community.make.com/c/hire-a-pro/hire-help/74.json' },
+      { kind: 'latest', url: 'https://community.make.com/latest.json' }
+    ],
+    excludedTopicIds: new Set([96837, 96841, 96842]),
+    excludedCategoryIds: new Set([75]), // Offer Help (self-promotion / freelancer ads)
+    jobsCategoryIds: new Set([74])       // Hire Help (official Make client hiring board)
+  }
+};
+
 function hasExplicitHiringOrPayIntent(text) {
-  return /\b(hiring|looking to hire|paid help|need paid|budget|freelancer|contractor|seeking (?:a |an )?(?:freelancer|contractor|developer|engineer|expert|consultant|partner)|looking for (?:a |an )?(?:freelancer|contractor|developer|engineer|consultant|partner))\b|\[\s*hiring\s*\]/i.test(String(text || ''));
+  return /\b(hiring|looking to hire|paid help|need paid|willing to pay|budget|freelancer|contractor|agency partner|seeking (?:a |an )?(?:freelancer|contractor|developer|engineer|expert|consultant|partner)|looking for (?:a |an )?(?:freelancer|contractor|developer|engineer|consultant|partner|white[- ]label))\b|\[\s*hiring\s*\]/i.test(String(text || ''));
 }
 
 function isN8nDeveloperShowcase(text) {
   const s = String(text || '').toLowerCase();
-  const showcasePattern = /\b(why i built|sharing (?:a|an|my)|i built (?:a|an|this)|built with n8n|open[- ]source|tutorial|check out my (?:repo|workflow|tool))\b|\[\s*for hire\s*\]/i.test(s);
+  const showcasePattern = /\b(why i built|sharing (?:a|an|my)|i built (?:a|an|this)|built with (?:n8n|make)|open[- ]source|tutorial|check out my (?:repo|workflow|tool|scenario)|available for (?:hire|work|projects|small)|offering (?:my|custom|automation|make|n8n) services|(?:make|n8n) (?:platinum|gold|silver) partner|promote yourself)\b|\[\s*for hire\s*\]/i.test(s);
   return showcasePattern && !hasExplicitHiringOrPayIntent(s);
 }
 
-function isCommercialN8nTopic(t, feedKind = 'jobs') {
+function isCommercialDiscourseTopic(t, feedKind = 'jobs', cfg = DISCOURSE_PLATFORMS.n8n) {
   if (!t || !t.title) return false;
-  if (t.id === 941 || t.pinned === true) return false;
+  if (t.pinned === true || cfg.excludedTopicIds.has(t.id) || cfg.excludedCategoryIds.has(t.category_id)) {
+    return false;
+  }
   const lower = t.title.toLowerCase();
-  if (lower.includes('guidelines') || lower.includes('about the jobs category')) return false;
+  if (
+    lower.includes('guidelines') ||
+    lower.includes('about the jobs category') ||
+    lower.includes('want to hire an expert') ||
+    lower.includes('want to offer your services')
+  ) {
+    return false;
+  }
   if (
     lower.includes('looking for small') ||
     lower.includes('looking for n8n') ||
+    lower.includes('looking for make') ||
     lower.includes('looking for projects') ||
     lower.includes('available for hire') ||
-    lower.includes('for hire') ||
+    lower.includes('available for small') ||
+    /\bfor hire\b/i.test(lower) ||
     /\b(unpaid|commission-based|commission only|commission-only|equity only|equity-only|pre-revenue|pre revenue)\b/i.test(lower)
   ) {
     return false;
   }
-  if (feedKind === 'jobs') return true;
   if (isN8nDeveloperShowcase(t.title)) return false;
 
-  // High-intent triggers inside /latest.json (hiring, agency partners, Zapier/Make bill-shock migrations, queue mode, broken webhooks/CRM)
+  const isJobsBoard = feedKind === 'jobs' || cfg.jobsCategoryIds.has(t.category_id);
+  if (isJobsBoard) return true;
+
+  // High-intent triggers inside /latest.json (hiring, agency partners, Make/Zapier bill-shock migrations, queue mode, broken webhooks/scenarios)
   return (
-    /(\[\s*hiring\s*\]|\bhiring\b|\bseeking (?:a |an )?(?:freelancer|contractor|developer|engineer|expert|partner)\b|\blooking to hire\b|\bagency partner\b)/i.test(lower) ||
-    (/\b(zapier|make\.com|integromat)\b/i.test(lower) && /\b(migrat|switch|move|cost|bill|pricing|expensive|alternative|replacing)\b/i.test(lower)) ||
-    /\b(queue mode|redis worker|self[- ]hosted scale|webhook fail|silent fail|idempoten|duplicate record|duplicate row|broken workflow|production error)\b/i.test(lower)
+    /(\[\s*hiring\s*\]|\bhiring\b|\bseeking (?:a |an )?(?:freelancer|contractor|developer|engineer|expert|partner|consultant)\b|\blooking to hire\b|\bagency partner\b|\bdeveloper needed\b|\bneed (?:a |an )?(?:make\.com|make|n8n|automation) (?:expert|developer|engineer|specialist)\b)/i.test(lower) ||
+    (/\b(zapier|make\.com|integromat|make scenarios?)\b/i.test(lower) && /\b(migrat|switch|move|cost|bill|pricing|expensive|operations? limit|alternative|replacing|n8n)\b/i.test(lower)) ||
+    (/\b(migrat|switch|move|replacing)\b/i.test(lower) && /\b(zapier|make\.com|integromat|n8n)\b/i.test(lower)) ||
+    /\b(queue mode|redis worker|self[- ]hosted scale|webhook fail|silent fail|idempoten|duplicate record|duplicate row|broken workflow|broken scenario|rate[- ]?limit|429 error|production error)\b/i.test(lower)
   );
+}
+
+function isCommercialN8nTopic(t, feedKind = 'jobs') {
+  return isCommercialDiscourseTopic(t, feedKind, DISCOURSE_PLATFORMS.n8n);
+}
+
+function isCommercialMakeTopic(t, feedKind = 'jobs') {
+  return isCommercialDiscourseTopic(t, feedKind, DISCOURSE_PLATFORMS.make);
+}
+
+function extractGeminiFallbackFields(rawAi) {
+  const techMatch = rawAi.match(/"technical_study"\s*:\s*"([\s\S]*?)(?=",\s*"workflow_architecture")/i);
+  const copyMatch = rawAi.match(/"proposed_copy"\s*:\s*"([\s\S]*?)(?=",\s*"antigravity_prompt")/i);
+  if (!techMatch || !copyMatch) return null;
+  const scoreMatch = rawAi.match(/"fit_score"\s*:\s*(\d+)/i);
+  const vertMatch = rawAi.match(/"matched_vertical"\s*:\s*"([^"]+)"/i);
+  const tierMatch = rawAi.match(/"recommended_offer_tier"\s*:\s*"([^"]+)"/i);
+  const archMatch = rawAi.match(/"workflow_architecture"\s*:\s*"([\s\S]*?)(?=",\s*"calculated_roi")/i);
+  const roiMatch = rawAi.match(/"calculated_roi"\s*:\s*"([\s\S]*?)(?=",\s*"proposed_copy")/i);
+  const promptMatch = rawAi.match(/"antigravity_prompt"\s*:\s*"([\s\S]*?)(?="\s*\}|\s*$)/i);
+  return {
+    fit_score: scoreMatch ? Number(scoreMatch[1]) : null,
+    matched_vertical: vertMatch ? vertMatch[1] : null,
+    recommended_offer_tier: tierMatch ? tierMatch[1] : null,
+    technical_study: techMatch[1].replace(/\\n/g, '\n').trim(),
+    workflow_architecture: archMatch ? archMatch[1].replace(/\\n/g, '\n').trim() : '',
+    calculated_roi: roiMatch ? roiMatch[1].replace(/\\n/g, '\n').trim() : '',
+    proposed_copy: copyMatch[1].replace(/\\n/g, '\n').trim(),
+    antigravity_prompt: promptMatch ? promptMatch[1].replace(/\\n/g, '\n').trim() : ''
+  };
 }
 
 function isCommercialHnHit(hit) {
@@ -803,41 +883,38 @@ function isCommercialHnHit(hit) {
   return true;
 }
 
-async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds, queryStats) {
-  console.log('[CloudScout] Scanning n8n Community (/c/jobs/18.json, /c/jobs/13.json, /latest.json)...');
+async function scanDiscourseCommunityJobs(cfg, metrics, seenTopicIds, memory, playbook, seenLeadIds, queryStats) {
+  console.log(`[CloudScout] Scanning ${cfg.label} (${cfg.feeds.map(f => f.url.replace(cfg.baseUrl, '')).join(', ')})...`);
   const appliedTopicIds = getTrackedTopicIds(memory);
   const playbookContext = formatPlaybookContext(playbook || {});
   const dynamicQueries = (playbook?.dynamic_search_queries || []).map(q => q.query).filter(Boolean);
 
-  const n8nFeeds = [
-    { kind: 'jobs', url: 'https://community.n8n.io/c/jobs/18.json' },
-    { kind: 'jobs', url: 'https://community.n8n.io/c/jobs/13.json' },
-    { kind: 'latest', url: 'https://community.n8n.io/latest.json' }
-  ];
-
   const candidateTopics = [];
   const seenFeedIds = new Set();
 
-  for (const feed of n8nFeeds) {
+  for (const feed of cfg.feeds) {
     try {
       const res = await fetch(feed.url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MRomih-Scout/2.0' },
         signal: AbortSignal.timeout(10000)
       });
       if (!res.ok) {
-        console.warn(`[n8n Community] Feed ${feed.url} returned HTTP ${res.status}; continuing gracefully.`);
+        console.warn(`[${cfg.label}] Feed ${feed.url} returned HTTP ${res.status}; continuing gracefully.`);
         continue;
       }
       const data = await res.json();
       const topics = data?.topic_list?.topics || [];
       metrics.issues_scanned += topics.length;
+      if (cfg.platformKey === 'make') {
+        metrics.make_scanned_topics = (metrics.make_scanned_topics || 0) + topics.length;
+      }
       for (const topic of topics) {
         if (!topic || !topic.id || seenFeedIds.has(topic.id)) continue;
         seenFeedIds.add(topic.id);
         candidateTopics.push({ topic, kind: feed.kind });
       }
     } catch (err) {
-      console.warn(`[n8n Community] Feed error (${feed.url}):`, err.message);
+      console.warn(`[${cfg.label}] Feed error (${feed.url}):`, err.message);
     }
   }
 
@@ -845,20 +922,20 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, se
 
   try {
     for (const { topic, kind } of candidateTopics) {
-      if (!isCommercialN8nTopic(topic, kind)) continue;
+      if (!isCommercialDiscourseTopic(topic, kind, cfg)) continue;
 
       const createdTime = new Date(topic.created_at).getTime();
       if (createdTime < fourteenDaysAgo) continue;
 
-      const n8nLeadId = `n8n_${topic.id}`;
-      if (seenN8nTopics.has(topic.id) || appliedTopicIds.has(topic.id) || (seenLeadIds && seenLeadIds.has(n8nLeadId))) {
+      const leadId = `${cfg.leadPrefix}${topic.id}`;
+      if ((seenTopicIds && seenTopicIds.has(topic.id)) || appliedTopicIds.has(topic.id) || (seenLeadIds && seenLeadIds.has(leadId))) {
         continue;
       }
 
       // Fetch full topic body from Discourse API
       let fullTopic = null;
       try {
-        const topicRes = await fetch(`https://community.n8n.io/t/${topic.id}.json`, {
+        const topicRes = await fetch(`${cfg.baseUrl}/t/${topic.id}.json`, {
           headers: { 'User-Agent': 'Mozilla/5.0 MRomih-Scout/2.0' },
           signal: AbortSignal.timeout(10000)
         });
@@ -866,11 +943,11 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, se
           fullTopic = await topicRes.json();
         }
       } catch (err) {
-        console.warn(`[n8n Community] Could not fetch topic #${topic.id}:`, err.message);
+        console.warn(`[${cfg.label}] Could not fetch topic #${topic.id}:`, err.message);
       }
 
       if (!fullTopic) continue;
-      if (fullTopic.archived === true) continue;
+      if (fullTopic.archived === true || cfg.excludedCategoryIds.has(fullTopic.category_id)) continue;
       if (/\[(closed|filled|expired|hired)\]/i.test(fullTopic.title)) continue;
 
       const firstPost = fullTopic.post_stream?.posts?.[0];
@@ -881,33 +958,36 @@ async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, se
       if (badTermsRegex.test(fullTopic.title) || badTermsRegex.test(textContent)) continue;
       if (/position (?:has been )?filled|no longer accepting|closed for applications/i.test(textContent)) continue;
 
-      seenN8nTopics.add(topic.id);
-      if (seenLeadIds) seenLeadIds.add(n8nLeadId);
+      if (seenTopicIds) seenTopicIds.add(topic.id);
+      if (seenLeadIds) seenLeadIds.add(leadId);
 
-      if (kind !== 'jobs' && isN8nDeveloperShowcase(`${fullTopic.title} ${textContent}`)) {
-        console.log(`[n8n Community] Skipping developer showcase/tutorial topic #${topic.id}: ${fullTopic.title}`);
+      const combinedText = `${fullTopic.title || topic.title} ${textContent}`;
+      if (isN8nDeveloperShowcase(combinedText)) {
+        console.log(`[${cfg.label}] Skipping showcase/self-promo topic #${topic.id}: ${topic.title}`);
         continue;
       }
 
       // Attribute dynamic query hit telemetry cleanly
-      const combinedText = `${topic.title} ${textContent}`;
       const matchedQueries = dynamicQueries.filter(q => doesTextMatchDynamicQuery(combinedText, q));
       for (const mq of matchedQueries) {
         if (queryStats && queryStats[mq]) queryStats[mq].run_hits++;
       }
 
-      const topicUrl = `https://community.n8n.io/t/${topic.slug || topic.id}/${topic.id}`;
+      const topicUrl = `${cfg.baseUrl}/t/${topic.slug || topic.id}/${topic.id}`;
       const authorUsername = firstPost?.username || 'the poster';
-      const hasBrokenHistory = /broken|failed|unreliable|previous freelancer|frustrat|silent fail|duplicate|idempoten|429/i.test(combinedText);
-      const isMigrationOrQueue = /\b(zapier|make\.com|integromat|queue mode|bill|cost)\b/i.test(combinedText);
+      const hasBrokenHistory = /broken|failed|unreliable|previous freelancer|frustrat|silent fail|duplicate|idempoten|429|rate[- ]?limit/i.test(combinedText);
+      const isMigrationOrQueue = /\b(zapier|make\.com|integromat|operations? limit|queue mode|bill|cost)\b/i.test(combinedText) || cfg.platformKey === 'make';
 
       let study = null;
       try {
+        const boardLabel = (kind === 'jobs' || cfg.jobsCategoryIds.has(topic.category_id))
+          ? (cfg.platformKey === 'make' ? 'Hire Help' : 'Jobs')
+          : 'Latest Commercial Trigger';
         const aiPrompt = `
 You are the Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
-Score (0-100) and perform a comprehensive technical study, Commercial Playbook matching, architecture design, and proposal drafting for this n8n Community opportunity:
+Score (0-100) and perform a comprehensive technical study, Commercial Playbook matching, architecture design, and proposal drafting for this ${cfg.label} opportunity (we deliver both production Make.com fixes/scenarios AND Make-to-n8n cost-saving migrations):
 
-Platform: Official n8n Community (${kind === 'jobs' ? 'Jobs' : 'Latest Commercial Trigger'})
+Platform: Official ${cfg.label} (${boardLabel})
 Topic ID: #${topic.id}
 Title: ${topic.title}
 Author: ${authorUsername}
@@ -919,9 +999,9 @@ Commercial & Technical Playbook (playbook.json, including winning_pitch_rules):
 ${playbookContext}
 
 Playbook Execution Mandates:
-1. Assign "fit_score" (0-100): Score >= 75 ONLY for legitimate paid hiring/partner opportunities, Zapier/Make bill-shock migrations, queue-mode scaling needs, or broken production webhooks/CRMs. Score < 75 for hobby questions, beginner tutorials, or low-value noise.
+1. Assign "fit_score" (0-100): Score >= 75 ONLY for legitimate paid hiring/partner opportunities, Make/Zapier bill-shock or ops-limit migrations to n8n, queue-mode scaling needs, or broken production scenarios/webhooks/CRMs. Score < 75 for hobby questions, beginner tutorials, freelancer self-promo, or low-value noise.
 2. Classify into closest vertical key ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
-3. Apply winning_pitch_rules from playbook.json: if broken webhooks, unreliable past freelancers, or Zapier/Make bill-shock appear, lead with our "$150 fixed (48h) Credited Diagnostic Audit" alongside the full build tier!
+3. Apply winning_pitch_rules from playbook.json: if broken scenarios/webhooks, unreliable past freelancers, or Make/Zapier bill-shock appear, lead with our "$150 fixed (48h) Credited Diagnostic Audit" alongside the full build/migration tier!
 4. Sign proposed_copy strictly as "Mohamed Romih | MRomih Automations". Strictly forbid robotic AI self-titles ("Autonomous COO", "AI Assistant", etc.).
 5. Public proofs: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and https://contra.com/mohamed_romih_jj5w3q2x
 
@@ -932,7 +1012,7 @@ Output strictly valid JSON:
   "matched_vertical": "ecommerce_and_creators | b2b_gtm_and_lead_triage | smb_healthcare_and_services | scraping_and_data_pipelines",
   "recommended_offer_tier": "diagnostic_audit | production_pipeline | enterprise_ai_system",
   "technical_study": "3-4 sentences breaking down client requirements, integration endpoints, and security/rate-limit considerations.",
-  "workflow_architecture": "Step-by-step n8n node topology (e.g. 1. Webhook trigger -> 2. Crypto HMAC validation -> 3. Idempotency check -> 4. CRM upsert -> 5. Dead-letter error trigger).",
+  "workflow_architecture": "Step-by-step Make/n8n node topology (e.g. 1. Webhook trigger -> 2. Crypto HMAC validation -> 3. Idempotency check -> 4. CRM upsert -> 5. Dead-letter error trigger).",
   "calculated_roi": "Offer tier | Estimated project value ($X USD) | Target rate ($45-$65/hr or fixed) | ROI justification",
   "proposed_copy": "Polished, engineering-first proposal weaving vertical hooks + credited $150 Diagnostic Audit if applicable, signed 'Mohamed Romih | MRomih Automations'.",
   "antigravity_prompt": "Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${topicUrl} in Chrome and outreach cleanly..."
@@ -941,33 +1021,22 @@ Output strictly valid JSON:
         const rawAi = await callGemini(aiPrompt);
         study = safeJsonParse(rawAi);
         if (!study || typeof study.fit_score === 'undefined') {
-          const scoreMatch = rawAi.match(/"fit_score"\s*:\s*(\d+)/i);
-          const vertMatch = rawAi.match(/"matched_vertical"\s*:\s*"([^"]+)"/i);
-          const tierMatch = rawAi.match(/"recommended_offer_tier"\s*:\s*"([^"]+)"/i);
-          const techMatch = rawAi.match(/"technical_study"\s*:\s*"([\s\S]*?)(?=",\s*"workflow_architecture")/i);
-          const archMatch = rawAi.match(/"workflow_architecture"\s*:\s*"([\s\S]*?)(?=",\s*"calculated_roi")/i);
-          const roiMatch = rawAi.match(/"calculated_roi"\s*:\s*"([\s\S]*?)(?=",\s*"proposed_copy")/i);
-          const copyMatch = rawAi.match(/"proposed_copy"\s*:\s*"([\s\S]*?)(?=",\s*"antigravity_prompt")/i);
-          const promptMatch = rawAi.match(/"antigravity_prompt"\s*:\s*"([\s\S]*?)(?="\s*\}|\s*$)/i);
-          if (techMatch && copyMatch) {
+          const extracted = extractGeminiFallbackFields(rawAi);
+          if (extracted) {
             study = {
-              fit_score: scoreMatch ? Number(scoreMatch[1]) : (kind === 'jobs' || hasBrokenHistory || isMigrationOrQueue ? 80 : 70),
+              ...extracted,
+              fit_score: extracted.fit_score ?? (kind === 'jobs' || hasBrokenHistory || isMigrationOrQueue ? 80 : 70),
               score_rationale: 'Extracted structured study from Gemini response.',
-              matched_vertical: vertMatch ? vertMatch[1] : 'b2b_gtm_and_lead_triage',
-              recommended_offer_tier: tierMatch ? tierMatch[1] : (hasBrokenHistory ? 'diagnostic_audit' : 'production_pipeline'),
-              technical_study: techMatch[1].replace(/\\n/g, '\n').trim(),
-              workflow_architecture: archMatch ? archMatch[1].replace(/\\n/g, '\n').trim() : '',
-              calculated_roi: roiMatch ? roiMatch[1].replace(/\\n/g, '\n').trim() : '',
-              proposed_copy: copyMatch[1].replace(/\\n/g, '\n').trim(),
-              antigravity_prompt: promptMatch ? promptMatch[1].replace(/\\n/g, '\n').trim() : ''
+              matched_vertical: extracted.matched_vertical || 'b2b_gtm_and_lead_triage',
+              recommended_offer_tier: extracted.recommended_offer_tier || (hasBrokenHistory ? 'diagnostic_audit' : 'production_pipeline')
             };
           } else {
             throw new Error('Could not parse Gemini JSON or extract fields.');
           }
         }
       } catch (err) {
-        console.warn('[n8n Community] AI study fallback:', err.message);
-        const fallbackScore = (kind === 'jobs' || hasBrokenHistory || isMigrationOrQueue) ? 80 : 68;
+        console.warn(`[${cfg.label}] AI study fallback:`, err.message);
+        const fallbackScore = (kind === 'jobs' || cfg.jobsCategoryIds.has(topic.category_id) || hasBrokenHistory || isMigrationOrQueue) ? 80 : 68;
         const fallbackTier = (hasBrokenHistory || isMigrationOrQueue) ? 'diagnostic_audit' : 'production_pipeline';
         const auditPitch = (hasBrokenHistory || isMigrationOrQueue)
           ? '\n\nIf you want zero-risk proof before committing to the full build, we can kick off with a $150 48-hour Diagnostic Audit (100% credited toward the final implementation).'
@@ -977,36 +1046,37 @@ Output strictly valid JSON:
           score_rationale: 'Heuristic trigger qualification for hiring/migration/broken-webhook thread.',
           matched_vertical: /gumroad|stripe|shopify|airtable/i.test(combinedText) ? 'ecommerce_and_creators' : 'b2b_gtm_and_lead_triage',
           recommended_offer_tier: fallbackTier,
-          technical_study: `Client requires production n8n automation for: ${topic.title}. Focus on reliable HMAC verification, idempotency, and dead-letter error routing.`,
+          technical_study: `Client requires production ${cfg.platformKey === 'make' ? 'Make / n8n migration or repair' : 'n8n'} automation for: ${topic.title}. Focus on reliable HMAC verification, idempotency, and dead-letter error routing.`,
           workflow_architecture: '1. Webhook Trigger + HMAC Gate -> 2. Transaction ID Idempotency Lookup -> 3. Normalized Upsert -> 4. Enterprise Error Dead-Letter Sub-workflow.',
           calculated_roi: `Offer Tier: ${fallbackTier} | $500–$850 fixed or $45/hr target | Zero duplicate rows & silent drops.`,
-          proposed_copy: `Hi,\n\nI reviewed your project requirements for "${topic.title}". At MRomih Automations, we build production n8n pipelines with HMAC SHA-256 webhook gates, transaction-ID idempotency (preventing duplicate rows), and dead-letter error alerting so nothing fails silently.${auditPitch}\n\nYou can inspect an open-source sample of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur portfolio and case studies:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nTarget Rate: $45/hr (or $500–$850 turnkey build).\nGlad to hop on a quick 15-minute call.\n\nBest regards,\nMohamed Romih | MRomih Automations`,
-          antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${topicUrl} in Chrome. Submit the pre-written proposal via external link, DM, or LinkedIn founder outreach. Log the outreach in AGENT_HANDOVER.md and push to origin main.`
+          proposed_copy: `Hi,\n\nI reviewed your project requirements for "${topic.title}". At MRomih Automations, we build production Make & n8n pipelines (as well as zero-downtime Make-to-n8n cost migrations) with HMAC webhook gates, transaction-ID idempotency, and dead-letter error alerting so nothing fails silently.${auditPitch}\n\nYou can inspect an open-source sample of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur portfolio and case studies:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nTarget Rate: $45/hr (or $500–$850 turnkey build).\nGlad to hop on a quick 15-minute call.\n\nBest regards,\nMohamed Romih | MRomih Automations`,
+          antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${topicUrl} in Chrome. Submit the pre-written proposal via DM or reply cleanly. Log the outreach in AGENT_HANDOVER.md and push to origin main.`
         };
       }
 
       const fitScore = Number(study.fit_score) || 0;
       if (fitScore < 75) {
-        console.log(`[n8n Community] Skipped low-fit topic #${topic.id} (score=${fitScore}/100): ${study.score_rationale || ''}`);
+        console.log(`[${cfg.label}] Skipped low-fit topic #${topic.id} (score=${fitScore}/100): ${study.score_rationale || ''}`);
         continue;
       }
 
       metrics.bounties_found++;
-      metrics.last_bounty = `n8n Community #${topic.id}: ${topic.title.substring(0, 32)}...`;
+      metrics.last_bounty = `${cfg.label} #${topic.id}: ${topic.title.substring(0, 32)}...`;
       for (const mq of matchedQueries) {
         if (queryStats && queryStats[mq]) queryStats[mq].run_qualified++;
       }
 
+      const boardSublabel = (kind === 'jobs' || cfg.jobsCategoryIds.has(topic.category_id)) ? 'Hire Board' : 'Migration / Audit Trigger';
       const alertMsg =
         `🟡 <b>[PRE-VETTED OPPORTUNITY — SCORE ${fitScore}/100]</b>\n` +
-        `<b>n8n Community Client Lead (${kind === 'jobs' ? 'Jobs' : 'Migration / Audit Trigger'})</b>\n\n` +
+        `<b>${escapeHtml(cfg.label)} Client Lead (${boardSublabel})</b>\n\n` +
         `📋 <b>Title:</b> ${escapeHtml(topic.title)}\n` +
         `👤 <b>Author:</b> <code>@${escapeHtml(authorUsername)}</code> | <b>Date:</b> ${topic.created_at.split('T')[0]}\n` +
         `🎯 <b>Playbook Match:</b> <code>${escapeHtml(study.matched_vertical || 'custom')}</code> | <b>Offer Tier:</b> <code>${escapeHtml(study.recommended_offer_tier || 'production_pipeline')}</code>\n` +
-        `🔗 <b>URL:</b> <a href="${topicUrl}">View Post on n8n Community</a>\n\n` +
+        `🔗 <b>URL:</b> <a href="${topicUrl}">View Post on ${escapeHtml(cfg.label)}</a>\n\n` +
         `🔬 <b>Technical Study &amp; Score Rationale:</b>\n` +
         `${escapeHtml(study.technical_study)}\n<i>Score rationale: ${escapeHtml(study.score_rationale || '')}</i>\n\n` +
-        `🛠️ <b>n8n Workflow Architecture Plan:</b>\n` +
+        `🛠️ <b>Workflow Architecture Plan:</b>\n` +
         `${escapeHtml(study.workflow_architecture)}\n\n` +
         `📊 <b>Calculated ROI &amp; Rate:</b>\n` +
         `${escapeHtml(study.calculated_roi)}\n\n` +
@@ -1018,11 +1088,19 @@ Output strictly valid JSON:
         ACTIONABLE_ROUTING_BANNER;
 
       await sendTelegram(alertMsg);
-      console.log(`[n8n Community] Dispatched pre-vetted opportunity #${topic.id} (score=${fitScore}/100).`);
+      console.log(`[${cfg.label}] Dispatched pre-vetted opportunity #${topic.id} (score=${fitScore}/100).`);
     }
   } catch (err) {
-    console.error('[n8n Community] Scan error:', err.message);
+    console.error(`[${cfg.label}] Scan error:`, err.message);
   }
+}
+
+async function scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds, queryStats) {
+  return scanDiscourseCommunityJobs(DISCOURSE_PLATFORMS.n8n, metrics, seenN8nTopics, memory, playbook, seenLeadIds, queryStats);
+}
+
+async function scanMakeCommunityJobs(metrics, memory, playbook, seenLeadIds, queryStats) {
+  return scanDiscourseCommunityJobs(DISCOURSE_PLATFORMS.make, metrics, null, memory, playbook, seenLeadIds, queryStats);
 }
 
 async function scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds, queryStats) {
@@ -1175,12 +1253,40 @@ Output strictly valid JSON:
   }
 }
 
-const REDDIT_FEEDS = [
-  { subreddit: 'forhire', url: 'https://www.reddit.com/r/forhire/new.json?limit=25' },
-  { subreddit: 'n8n', url: 'https://www.reddit.com/r/n8n/new.json?limit=25' },
-  { subreddit: 'automation', url: 'https://www.reddit.com/r/automation/new.json?limit=25' },
-  { subreddit: 'AI_Agents', url: 'https://www.reddit.com/r/AI_Agents/new.json?limit=25' }
-];
+const REDDIT_SUBREDDITS = ['forhire', 'freelance_forhire', 'n8n', 'automation', 'Make', 'zapier', 'AI_Agents'];
+
+async function getRedditOAuthToken() {
+  if (!REDDIT_CLIENT_ID || !REDDIT_CLIENT_SECRET) {
+    return null;
+  }
+  try {
+    const basic = Buffer.from(`${REDDIT_CLIENT_ID}:${REDDIT_CLIENT_SECRET}`).toString('base64');
+    const res = await fetch('https://www.reddit.com/api/v1/access_token', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${basic}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': REDDIT_USER_AGENT
+      },
+      body: 'grant_type=client_credentials',
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!res.ok) {
+      console.warn(`[Reddit OAuth] Token endpoint returned HTTP ${res.status}; falling back gracefully to public JSON.`);
+      return null;
+    }
+    const data = await res.json();
+    if (!data || !data.access_token) {
+      console.warn('[Reddit OAuth] Response missing access_token; falling back gracefully to public JSON.');
+      return null;
+    }
+    console.log('[Reddit OAuth] Authenticated successfully against oauth.reddit.com.');
+    return data.access_token;
+  } catch (err) {
+    console.warn('[Reddit OAuth] Token request failed cleanly (falling back to public JSON):', err.message);
+    return null;
+  }
+}
 
 function isQualifiedRedditPost(postData, subreddit) {
   if (!postData || !postData.id || !postData.title) return false;
@@ -1197,7 +1303,7 @@ function isQualifiedRedditPost(postData, subreddit) {
   const combined = `${title}\n${selftext}`;
 
   // Exclude [For Hire] self-promotion and service ads
-  if (/\[\s*for\s*hire\s*\]/i.test(title) || /\b(available for hire|offering my (?:n8n|automation|ai) services|i am an? (?:n8n|automation|ai|python) (?:freelancer|developer|engineer)|for hire:)/i.test(combined)) {
+  if (/\[\s*for\s*hire\s*\]/i.test(title) || /\b(available for hire|offering my (?:n8n|make|zapier|automation|ai) services|i am an? (?:n8n|make|zapier|automation|ai|python) (?:freelancer|developer|engineer)|for hire:)/i.test(combined)) {
     return false;
   }
 
@@ -1215,38 +1321,52 @@ function isQualifiedRedditPost(postData, subreddit) {
   }
 
   // Require hiring / contractor / paid budget signal
-  const hasHiringSignal = /(\[\s*hiring\s*\]|\blooking to hire\b|\blooking for (?:a |an )?(?:freelancer|contractor|developer|engineer|consultant|expert|specialist)\b|\bneed (?:a |an )?(?:freelancer|contractor|developer|engineer)\b|\bbudget\b|\bfreelancer\b|\bcontractor\b)/i.test(combined);
+  const hasHiringSignal = /(\[\s*hiring\s*\]|\blooking to hire\b|\bpaid help\b|\bwilling to pay\b|\blooking for (?:a |an )?(?:freelancer|contractor|developer|engineer|consultant|expert|specialist|partner)\b|\bneed (?:a |an )?(?:freelancer|contractor|developer|engineer|expert|consultant)\b|\bbudget\b|\bfreelancer\b|\bcontractor\b|\bagency partner\b)/i.test(combined);
   if (!hasHiringSignal) {
     return false;
   }
 
-  // Require relevant automation / n8n / webhook / AI agent / CRM technical signal
-  const hasTechSignal = /\b(n8n|webhook|api integration|ai agent|crm sync|crm|airtable|hubspot|automation|workflow|scraper|scraping|playwright|zapier|make\.com)\b/i.test(combined);
+  // Require relevant automation / n8n / Make / Zapier / webhook / AI agent / CRM technical signal
+  const subLower = String(subreddit || '').toLowerCase();
+  if (['n8n', 'make', 'zapier'].includes(subLower)) {
+    return true;
+  }
+  const hasTechSignal = /\b(n8n|webhook|api integration|ai agent|crm sync|crm|airtable|hubspot|automation|workflow|scraper|scraping|playwright|zapier|make\.com|integromat|make scenario)\b/i.test(combined);
   return hasTechSignal;
 }
 
 async function scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook) {
-  console.log('[CloudScout] Scanning Reddit public feeds (r/forhire, r/n8n, r/automation, r/AI_Agents)...');
+  const oauthToken = await getRedditOAuthToken();
+  const modeLabel = oauthToken ? 'OAuth (oauth.reddit.com)' : 'public fallback (no OAuth creds)';
+  console.log(`[CloudScout] Scanning Reddit via ${modeLabel} across ${REDDIT_SUBREDDITS.map(s => 'r/' + s).join(', ')}...`);
   const playbookContext = formatPlaybookContext(playbook || {});
   metrics.reddit_scanned_posts = 0;
 
-  for (const feed of REDDIT_FEEDS) {
+  for (const subreddit of REDDIT_SUBREDDITS) {
+    const url = oauthToken
+      ? `https://oauth.reddit.com/r/${subreddit}/new.json?limit=25`
+      : `https://www.reddit.com/r/${subreddit}/new.json?limit=25`;
+    const reqHeaders = {
+      'User-Agent': REDDIT_USER_AGENT,
+      'Accept': 'application/json'
+    };
+    if (oauthToken) {
+      reqHeaders['Authorization'] = `Bearer ${oauthToken}`;
+    }
+
     try {
-      const res = await fetch(feed.url, {
-        headers: {
-          'User-Agent': 'MRomihAutomations-Scout/1.0',
-          'Accept': 'application/json'
-        },
+      const res = await fetch(url, {
+        headers: reqHeaders,
         signal: AbortSignal.timeout(10000)
       });
 
       if (res.status === 429) {
         const retryAfter = res.headers.get('retry-after') || 'unknown';
-        console.warn(`[Reddit r/${feed.subreddit}] Rate limited (HTTP 429, Retry-After: ${retryAfter}); skipping gracefully.`);
+        console.warn(`[Reddit r/${subreddit}] Rate limited (HTTP 429, Retry-After: ${retryAfter}); skipping gracefully.`);
         continue;
       }
       if (!res.ok) {
-        console.warn(`[Reddit r/${feed.subreddit}] Non-OK HTTP ${res.status}; skipping feed gracefully.`);
+        console.warn(`[Reddit r/${subreddit}] Non-OK HTTP ${res.status}; skipping feed gracefully.`);
         continue;
       }
 
@@ -1257,7 +1377,7 @@ async function scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook) 
 
       for (const child of children) {
         const post = child?.data;
-        if (!isQualifiedRedditPost(post, feed.subreddit)) continue;
+        if (!isQualifiedRedditPost(post, subreddit)) continue;
 
         const leadId = `reddit_${post.id}`;
         if (seenLeadIds && seenLeadIds.has(leadId)) continue;
@@ -1267,7 +1387,7 @@ async function scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook) 
 
         const postUrl = post.permalink
           ? `https://www.reddit.com${post.permalink}`
-          : (post.url || `https://www.reddit.com/r/${feed.subreddit}/comments/${post.id}`);
+          : (post.url || `https://www.reddit.com/r/${subreddit}/comments/${post.id}`);
         const postBody = String(post.selftext || '').replace(/\s+/g, ' ').trim();
         const authorName = post.author || 'reddit_poster';
 
@@ -1277,7 +1397,7 @@ async function scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook) 
 You are the Principal Automation Architect at MRomih Automations (Founder: Mohamed Romih).
 Score and evaluate this Reddit hiring/project lead using our Commercial & Technical Playbook:
 
-Subreddit: r/${feed.subreddit}
+Subreddit: r/${subreddit}
 Title: ${post.title}
 Author: u/${authorName}
 URL: ${postUrl}
@@ -1288,7 +1408,7 @@ Commercial & Technical Playbook (playbook.json):
 ${playbookContext}
 
 Scoring & Drafting Mandates:
-1. Score this opportunity 0 to 100 ("fit_score") based on budget legitimacy (>= $100 or $25+/hr), hiring urgency, technical alignment with n8n/webhooks/AI agents/CRMs/scraping, and clear commercial value. Score < 75 for vague ideas, micro-tasks, or unclear unpaid asks.
+1. Score this opportunity 0 to 100 ("fit_score") based on budget legitimacy (>= $100 or $25+/hr), hiring urgency, technical alignment with n8n/Make/Zapier/webhooks/AI agents/CRMs/scraping, and clear commercial value. Score < 75 for vague ideas, micro-tasks, or unclear unpaid asks.
 2. Classify into closest vertical_playbooks key ("ecommerce_and_creators", "b2b_gtm_and_lead_triage", "smb_healthcare_and_services", or "scraping_and_data_pipelines").
 3. Select the highest-converting offer_ladder tier ("diagnostic_audit", "production_pipeline", or "enterprise_ai_system"). If broken workflows or unreliable freelancers are mentioned, pitch the $150 48h Credited Diagnostic Audit alongside the build.
 4. Sign proposed_copy strictly as "Mohamed Romih | MRomih Automations". Strictly forbid robotic AI self-titles.
@@ -1311,34 +1431,34 @@ Output strictly valid JSON:
             throw new Error('Invalid JSON or missing fit_score from Gemini');
           }
         } catch (err) {
-          console.warn(`[Reddit r/${feed.subreddit}] AI scorer fallback (${post.id}):`, err.message);
-          const hasExplicitHighSignal = /(\[\s*hiring\s*\]|n8n|webhook|crm|airtable|hubspot|budget|\$\d{3,})/i.test(`${post.title} ${postBody}`);
+          console.warn(`[Reddit r/${subreddit}] AI scorer fallback (${post.id}):`, err.message);
+          const hasExplicitHighSignal = /(\[\s*hiring\s*\]|n8n|make\.com|zapier|webhook|crm|airtable|hubspot|budget|\$\d{3,})/i.test(`${post.title} ${postBody}`);
           study = {
             fit_score: hasExplicitHighSignal ? 78 : 65,
             score_rationale: 'Heuristic qualification fallback evaluating hiring tags, automation keywords, and budget cues.',
             matched_vertical: /gumroad|stripe|shopify|airtable/i.test(postBody) ? 'ecommerce_and_creators' : (/scrap|playwright/i.test(postBody) ? 'scraping_and_data_pipelines' : 'b2b_gtm_and_lead_triage'),
             recommended_offer_tier: /broken|fail|fix|unreliable/i.test(postBody) ? 'diagnostic_audit' : 'production_pipeline',
-            technical_study: `Reddit opportunity on r/${feed.subreddit}: ${post.title}. Requires production webhook/CRM or AI agent reliability.`,
+            technical_study: `Reddit opportunity on r/${subreddit}: ${post.title}. Requires production webhook/CRM or AI agent reliability.`,
             workflow_architecture: '1. Webhook Security Gate (HMAC) -> 2. Idempotency Lookup -> 3. Normalized Upsert / AI Triage -> 4. Error Dead-Letter Alerting.',
             calculated_roi: 'Target $500–$850 turnkey build or $45–$65/hr ($150 credited audit option).',
-            proposed_copy: `Hi,\n\nI saw your post regarding "${post.title}". At MRomih Automations, I architect production n8n & AI agent pipelines with HMAC webhook verification, idempotency deduplication, and dead-letter error routing so automations never fail silently.\n\nInspect our open-source architecture: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\nCase studies: https://contra.com/mohamed_romih_jj5w3q2x\n\nHappy to jump on a quick call or run a $150 48-hour diagnostic audit (100% credited toward the build).\n\nBest regards,\nMohamed Romih | MRomih Automations`,
+            proposed_copy: `Hi,\n\nI saw your post regarding "${post.title}". At MRomih Automations, I architect production n8n, Make, and AI agent pipelines with HMAC webhook verification, idempotency deduplication, and dead-letter error routing so automations never fail silently.\n\nInspect our open-source architecture: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\nCase studies: https://contra.com/mohamed_romih_jj5w3q2x\n\nHappy to jump on a quick call or run a $150 48-hour diagnostic audit (100% credited toward the build).\n\nBest regards,\nMohamed Romih | MRomih Automations`,
             antigravity_prompt: `Run \`git pull\` first in MRomih-Automations/revenue-scout-cron and MRomih-Automations/revenue-engine, then open ${postUrl} in Chrome and outreach to u/${authorName} using the tailored proposal above.`
           };
         }
 
         const fitScore = Number(study.fit_score) || 0;
         if (fitScore < 75) {
-          console.log(`[Reddit r/${feed.subreddit}] Skipped low-fit post ${post.id} (score=${fitScore}/100): ${study.score_rationale || ''}`);
+          console.log(`[Reddit r/${subreddit}] Skipped low-fit post ${post.id} (score=${fitScore}/100): ${study.score_rationale || ''}`);
           continue;
         }
 
         metrics.bounties_found++;
-        metrics.last_bounty = `Reddit r/${feed.subreddit}: ${post.title.substring(0, 32)}...`;
-        console.log(`[Reddit r/${feed.subreddit}] Pre-vetted lead ${post.id} scored ${fitScore}/100 -> sending Telegram alert!`);
+        metrics.last_bounty = `Reddit r/${subreddit}: ${post.title.substring(0, 32)}...`;
+        console.log(`[Reddit r/${subreddit}] Pre-vetted lead ${post.id} scored ${fitScore}/100 -> sending Telegram alert!`);
 
         const alertMsg =
           `🟡 <b>[PRE-VETTED OPPORTUNITY — SCORE ${fitScore}/100]</b>\n` +
-          `<b>Reddit Automation Lead (r/${escapeHtml(feed.subreddit)})</b>\n\n` +
+          `<b>Reddit Automation Lead (r/${escapeHtml(subreddit)})</b>\n\n` +
           `📋 <b>Title:</b> ${escapeHtml(post.title)}\n` +
           `👤 <b>Author:</b> <code>u/${escapeHtml(authorName)}</code>\n` +
           `🎯 <b>Playbook Match:</b> <code>${escapeHtml(study.matched_vertical || 'custom')}</code> | <b>Offer Tier:</b> <code>${escapeHtml(study.recommended_offer_tier || 'production_pipeline')}</code>\n` +
@@ -1358,7 +1478,7 @@ Output strictly valid JSON:
         await sendTelegram(alertMsg);
       }
     } catch (err) {
-      console.warn(`[Reddit r/${feed.subreddit}] Feed request failed cleanly:`, err.message);
+      console.warn(`[Reddit r/${subreddit}] Feed request failed cleanly:`, err.message);
     }
   }
 }
@@ -1386,8 +1506,10 @@ async function run() {
   }
 
   if (isDryRun) {
-    // Self-check Reddit, HN Who-is-Hiring, n8n Zapier/Make migration triggers, and query matching cleanly without network calls
+    // Self-check Reddit, HN Who-is-Hiring, n8n/Make commercial & showcase guards cleanly without Gemini/Telegram writes
     const mockHiring = isQualifiedRedditPost({ id: 'r1', title: '[Hiring] Need n8n webhook + HubSpot CRM sync engineer ($600)', selftext: 'Looking to hire an n8n freelancer, $600 budget.' }, 'forhire');
+    const mockFreelanceForHire = isQualifiedRedditPost({ id: 'r1b', title: '[Hiring] Need Make to n8n migration specialist ($500)', selftext: 'Looking for a contractor to migrate Make scenarios.' }, 'freelance_forhire');
+    const mockRedditMake = isQualifiedRedditPost({ id: 'r1c', title: 'Need freelancer to fix broken scenario webhook', selftext: 'Paying $250 budget for broken scenario fix.' }, 'Make');
     const mockForHire = isQualifiedRedditPost({ id: 'r2', title: '[For Hire] n8n expert offering automation services', selftext: 'DM me for automation.' }, 'forhire');
     const mockMicro = isQualifiedRedditPost({ id: 'r3', title: '[Hiring] Quick $25 fix for zapier webhook', selftext: 'Budget $25 fixed.' }, 'forhire');
     const mockHnWhoIsHiring = isCommercialHnHit({ objectID: 'hn1', story_title: 'Ask HN: Who is hiring? (November 2026)', comment_text: 'Looking for a remote freelance n8n + webhook contractor to fix HubSpot CRM sync.' });
@@ -1398,17 +1520,39 @@ async function run() {
     const mockN8nShowcase2 = isCommercialN8nTopic({ id: 999004, title: 'Sharing a Zapier migration tutorial I built with n8n' }, 'latest');
     const mockN8nBodyShowcase = isN8nDeveloperShowcase('Why I built a free webhook helper tutorial for n8n');
     const mockN8nShowcaseHiringOverride = isCommercialN8nTopic({ id: 999005, title: 'Hiring freelancer: I built a Zapier migration MVP with n8n, need paid help' }, 'latest');
+    const mockMakeHireHelp = isCommercialMakeTopic({ id: 120066, category_id: 74, title: 'Airtable Automation Developer Needed' }, 'jobs');
+    const mockMakeOfferHelp = isCommercialMakeTopic({ id: 101972, category_id: 75, title: 'Make Platinum Partner | Help with Complex Make Scenarios' }, 'latest');
+    const mockMakeToN8nMigration = isCommercialMakeTopic({ id: 999006, category_id: 66, title: 'Make.com operations cost too expensive - migrating scenarios to n8n' }, 'latest');
+    const oauthDryFallback = (!REDDIT_CLIENT_ID || !REDDIT_CLIENT_SECRET) ? (await getRedditOAuthToken() === null) : true;
 
     if (
-      !mockHiring || mockForHire || mockMicro || !mockHnWhoIsHiring || mockHnWantHired ||
-      !mockN8nMigration || mockN8nBasic || mockN8nShowcase1 || mockN8nShowcase2 ||
-      !mockN8nBodyShowcase || !mockN8nShowcaseHiringOverride
+      !mockHiring || !mockFreelanceForHire || !mockRedditMake || mockForHire || mockMicro ||
+      !mockHnWhoIsHiring || mockHnWantHired || !mockN8nMigration || mockN8nBasic ||
+      mockN8nShowcase1 || mockN8nShowcase2 || !mockN8nBodyShowcase || !mockN8nShowcaseHiringOverride ||
+      !mockMakeHireHelp || mockMakeOfferHelp || !mockMakeToN8nMigration || !oauthDryFallback
     ) {
       throw new Error(
-        `Scout pre-filter self-check failed: hiring=${mockHiring}, forHire=${mockForHire}, micro=${mockMicro}, hnHiring=${mockHnWhoIsHiring}, hnWantHired=${mockHnWantHired}, n8nMig=${mockN8nMigration}, n8nBasic=${mockN8nBasic}, show1=${mockN8nShowcase1}, show2=${mockN8nShowcase2}, bodyShow=${mockN8nBodyShowcase}, showHire=${mockN8nShowcaseHiringOverride}`
+        `Scout pre-filter self-check failed: hiring=${mockHiring}, f4h=${mockFreelanceForHire}, rMake=${mockRedditMake}, forHire=${mockForHire}, micro=${mockMicro}, hnHiring=${mockHnWhoIsHiring}, hnWantHired=${mockHnWantHired}, n8nMig=${mockN8nMigration}, n8nBasic=${mockN8nBasic}, show1=${mockN8nShowcase1}, show2=${mockN8nShowcase2}, bodyShow=${mockN8nBodyShowcase}, showHire=${mockN8nShowcaseHiringOverride}, makeHire=${mockMakeHireHelp}, makeOffer=${mockMakeOfferHelp}, makeMig=${mockMakeToN8nMigration}, oauthDry=${oauthDryFallback}`
       );
     }
-    console.log('[CloudScout] --dry-run passed: verified brain_memory.json, playbook.json (dynamic_search_queries + winning_pitch_rules), HN/n8n/Reddit pre-filters, seen_lead_ids deduplication, and routing banners cleanly.');
+
+    // Live read-only smoke verification of community.make.com Hire Help feed (0 side effects)
+    const makeDryRes = await fetch('https://community.make.com/c/hire-a-pro/hire-help/74.json', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) MRomih-Scout/2.0' },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!makeDryRes.ok) {
+      throw new Error(`Make Community live check failed with HTTP ${makeDryRes.status}`);
+    }
+    const makeDryJson = await makeDryRes.json();
+    const makeDryTopics = makeDryJson?.topic_list?.topics || [];
+    const makeCommercialTopics = makeDryTopics.filter(t => isCommercialMakeTopic(t, 'jobs'));
+    if (makeDryTopics.length === 0 || makeCommercialTopics.length === 0) {
+      throw new Error(`Make Community live check returned insufficient topics: total=${makeDryTopics.length}, commercial=${makeCommercialTopics.length}`);
+    }
+
+    console.log(`[CloudScout] --dry-run Make Community verified: ${makeDryTopics.length} scanned topics, ${makeCommercialTopics.length} commercial Hire Help topics (top: #${makeCommercialTopics[0].id} "${makeCommercialTopics[0].title}").`);
+    console.log('[CloudScout] --dry-run passed: verified brain_memory.json, playbook.json (dynamic_search_queries + winning_pitch_rules), HN/n8n/Make/Reddit pre-filters, Reddit OAuth fallback, seen_lead_ids deduplication, and live community.make.com topics cleanly.');
     return;
   }
 
@@ -1430,7 +1574,8 @@ async function run() {
     bounties_found: 0,
     last_bounty: null,
     hn_scanned_hits: 0,
-    reddit_scanned_posts: 0
+    reddit_scanned_posts: 0,
+    make_scanned_topics: 0
   };
 
   const seenN8nTopics = new Set();
@@ -1445,13 +1590,16 @@ async function run() {
   // 3. Scan n8n Community (/c/jobs/18.json, /13.json, /latest.json migration/broken-webhook triggers)
   await scanN8nCommunityJobs(metrics, seenN8nTopics, memory, playbook, seenLeadIds, queryStats);
 
-  // 4. Scan Hacker News Algolia queries (core + dynamic_search_queries + Who is Hiring comments)
+  // 4. Scan Make Community (/c/hire-a-pro/hire-help/74.json, /latest.json migration/broken-scenario triggers)
+  await scanMakeCommunityJobs(metrics, memory, playbook, seenLeadIds, queryStats);
+
+  // 5. Scan Hacker News Algolia queries (core + dynamic_search_queries + Who is Hiring comments)
   await scanHackerNews(metrics, seenHnIds, memory, playbook, seenLeadIds, queryStats);
 
-  // 5. Scan Reddit Automation & Hiring Feeds
+  // 6. Scan Reddit Automation & Hiring Feeds (oauth.reddit.com when configured, public JSON fallback)
   await scanRedditAutomationGigs(metrics, seenLeadIds, memory, playbook);
 
-  // 6. Update live telemetry in repository (including capped seen_lead_ids & query_stats)
+  // 7. Update live telemetry in repository (including capped seen_lead_ids & query_stats)
   await updateLiveTelemetry(metrics, Array.from(seenN8nTopics), seenLeadIds, queryStats);
   console.log('[CloudScout] Autonomous technical scout cycle completed successfully.');
 }
