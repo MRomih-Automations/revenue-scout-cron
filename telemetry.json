@@ -55,5 +55,61 @@
       "zero_hit_runs": 21,
       "last_run_at": "2026-11-27T09:44:19.747Z"
     }
-  }
+  },
+  "last_ceo_brain_timestamp": "2026-11-27T09:55:29.392Z",
+  "human_escalation_active": false,
+  "last_push_title": "Autonomous Standby",
+  "n8n_topics_scanned": 8,
+  "opire_rewards_scanned": 3,
+  "hn_signals_scanned": 8,
+  "templates_in_lead_magnet": 4,
+  "active_governance_schedules": 6,
+  "active_dynamic_queries": 3,
+  "distilled_company_rules_count": 0,
+  "active_experiment_status": "RUNNING",
+  "open_deal_momentum": [
+    {
+      "id": "kkrova_airtable_gumroad_329131",
+      "company": "Gumroad Store (kkrova)",
+      "heat_score": 72,
+      "urgency": "HOT"
+    },
+    {
+      "id": "steek_lab_francois1",
+      "company": "Steek Lab",
+      "heat_score": 64,
+      "urgency": "HOT"
+    }
+  ],
+  "north_star_pacing": {
+    "target_monthly_usd": 3000,
+    "total_revenue_usd": 0,
+    "revenue_gap_usd": 3000,
+    "proposals_sent": 2,
+    "replies_received": 0,
+    "calls_booked": 0,
+    "deals_won": 0,
+    "reply_rate_pct": 0,
+    "call_rate_pct": 0,
+    "win_rate_pct": 0,
+    "primary_bottleneck": "outbound volume",
+    "bottleneck_prescription": "Only 2 outbound proposal(s) logged vs. $3,000/mo target ($3000 gap); maximize 48h Fiverr/Contra/LinkedIn sweeps and Scout alerts."
+  },
+  "study_sources_scanned": {
+    "hn": 8,
+    "github_repos": 0,
+    "n8n_latest": 10
+  },
+  "last_evolution_summary": "Pruned 2 zero-hit query(s): webhook idempotency OR Airtable HubSpot sync freelancer; AI lead triage OR voice agent developer.",
+  "requested_upgrades_total": 0,
+  "conversion_funnel": {
+    "proposals_sent": 2,
+    "replies_received": 0,
+    "calls_booked": 0,
+    "deals_won": 0,
+    "total_revenue_usd": 0,
+    "winning_angles": []
+  },
+  "telegram_last_update_id": 177823494,
+  "playbook_discovered_patterns": 3
 }
