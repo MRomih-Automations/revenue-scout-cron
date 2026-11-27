@@ -200,7 +200,11 @@
       "follow_up_due_at": "2026-11-28T20:57:42Z",
       "follow_up_staged": true,
       "proposal_copy": "Hi kkrova,\n\nI’m Mohamed Romih, Founder and Principal Automation Architect at MRomih Automations. I read your post regarding your upcoming Gumroad store launch and your past frustrating experience with unreliable freelancers. Building bulletproof, production-grade syncs is our core specialty.\n\nTo ensure your data flows seamlessly without silent failures, we engineer resilient pipelines rather than basic triggers. For your project, we will implement:\n- Cryptographic Webhook Verification (HMAC SHA-256) so only authentic Gumroad events are processed\n- Idempotency & Duplicate Prevention using transaction IDs so records never double-write in Airtable\n- Enterprise Error-Handling Sub-Workflows with instant alerting and payload logging so zero sales slip through\n\nYou can inspect an open-source example of our n8n architecture here: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and view our live workflow case studies on Contra: https://contra.com/mohamed_romih_jj5w3q2x.\n\nI am submitting my proposal directly through your Airtable form and am ready to build, test, and document this pipeline cleanly before your store launch.\n\nBest regards,\nMohamed Romih | MRomih Automations",
-      "heat_score": 72
+      "heat_score": 72,
+      "duplicate_crossposts": [
+        "https://community.make.com/t/airtable-automation-developer-needed/120066"
+      ],
+      "duplicate_check_note": "Confirmed exact duplicate cross-post on Make Community #120066 (@Alex_Gayton56, same Airtable form appkK1MZ2cLhJYQlR/pagE4pCmCjCzloG9u/form, 0 replies by author, still open); zero duplicate outreach sent (2026-11-27)."
     }
   ],
   "published_templates": [
