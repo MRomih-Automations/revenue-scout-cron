@@ -2,7 +2,8 @@
   "seen_lead_ids": [
     "n8n_329187",
     "n8n_330221",
-    "n8n_328934"
+    "n8n_328934",
+    "make_120066"
   ],
   "seen_n8n_topics": [
     329187,
@@ -10,13 +11,13 @@
     328934
   ],
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-27T10:53:12.810Z",
-  "heartbeat_unix": 1795776792810,
+  "last_run_timestamp": "2026-11-27T11:48:37.874Z",
+  "heartbeat_unix": 1795780117874,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
-  "issues_scanned": 139,
-  "qualified_bounties_found": 0,
-  "last_bounty_title": "n8n Community #328934: Why I built a dedicated Apify Ac...",
+  "issues_scanned": 199,
+  "qualified_bounties_found": 1,
+  "last_bounty_title": "Make Community #120066: Airtable Automation Developer Ne...",
   "hn_scanned_hits": 47,
   "reddit_scanned_posts": 0,
   "query_stats": {
@@ -24,22 +25,22 @@
       "query": "\"n8n\" OR \"Make\" automation agency partner",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 23,
-      "last_run_at": "2026-11-27T10:53:12.810Z"
+      "zero_hit_runs": 24,
+      "last_run_at": "2026-11-27T11:48:37.874Z"
     },
     "zapier OR make migration n8n": {
       "query": "zapier OR make migration n8n",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 23,
-      "last_run_at": "2026-11-27T10:53:12.810Z"
+      "zero_hit_runs": 24,
+      "last_run_at": "2026-11-27T11:48:37.874Z"
     },
     "n8n self-hosted queue mode webhook": {
       "query": "n8n self-hosted queue mode webhook",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 23,
-      "last_run_at": "2026-11-27T10:53:12.810Z"
+      "zero_hit_runs": 24,
+      "last_run_at": "2026-11-27T11:48:37.874Z"
     }
   },
   "last_ceo_brain_timestamp": "2026-11-27T09:55:29.392Z",
@@ -97,5 +98,6 @@
     "winning_angles": []
   },
   "telegram_last_update_id": 177823494,
-  "playbook_discovered_patterns": 3
+  "playbook_discovered_patterns": 3,
+  "make_scanned_topics": 60
 }
