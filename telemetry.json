@@ -47,15 +47,15 @@
       "last_run_at": "2026-11-28T09:17:57.151Z"
     }
   },
-  "last_ceo_brain_timestamp": "2026-11-27T09:55:29.392Z",
-  "human_escalation_active": false,
-  "last_push_title": "Autonomous Standby",
+  "last_ceo_brain_timestamp": "2026-11-28T09:42:43.723Z",
+  "human_escalation_active": true,
+  "last_push_title": "Steek Lab (François Hurstel) LinkedIn follow-up is due (48h cadence). Human founder Mohamed Romih mu",
   "n8n_topics_scanned": 8,
   "opire_rewards_scanned": 3,
   "hn_signals_scanned": 8,
   "templates_in_lead_magnet": 4,
   "active_governance_schedules": 6,
-  "active_dynamic_queries": 3,
+  "active_dynamic_queries": 5,
   "distilled_company_rules_count": 0,
   "active_experiment_status": "RUNNING",
   "open_deal_momentum": [
@@ -63,6 +63,12 @@
       "id": "kkrova_airtable_gumroad_329131",
       "company": "Gumroad Store (kkrova)",
       "heat_score": 72,
+      "urgency": "HOT"
+    },
+    {
+      "id": "karene_wpforms_capsule_120682",
+      "company": "KarenE client (event management)",
+      "heat_score": 67,
       "urgency": "HOT"
     },
     {
@@ -91,7 +97,7 @@
     "github_repos": 0,
     "n8n_latest": 10
   },
-  "last_evolution_summary": "Pruned 2 zero-hit query(s): webhook idempotency OR Airtable HubSpot sync freelancer; AI lead triage OR voice agent developer.",
+  "last_evolution_summary": "Added high-intent Scout queries targeting n8n error handling and SMB AI agent workflows to capture immediate production reliability demand.",
   "requested_upgrades_total": 0,
   "conversion_funnel": {
     "proposals_sent": 2,
