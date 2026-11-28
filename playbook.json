@@ -7,9 +7,9 @@
       "query": "\"n8n\" OR \"Make\" automation agency partner",
       "target_source": "all",
       "vertical_hint": "b2b_gtm_and_lead_triage",
-      "hits": 2,
-      "qualified_leads": 1,
-      "zero_hit_runs": 21
+      "hits": 3,
+      "qualified_leads": 2,
+      "zero_hit_runs": 46
     },
     {
       "query": "zapier OR make migration n8n",
@@ -17,15 +17,31 @@
       "vertical_hint": "ecommerce_and_creators",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 21
+      "zero_hit_runs": 52
     },
     {
       "query": "n8n self-hosted queue mode webhook",
       "target_source": "all",
       "vertical_hint": "ecommerce_and_creators",
-      "hits": 2,
+      "hits": 3,
       "qualified_leads": 1,
-      "zero_hit_runs": 21
+      "zero_hit_runs": 37
+    },
+    {
+      "query": "\"n8n\" error handling webhooks fail-safe",
+      "target_source": "all",
+      "vertical_hint": "b2b_gtm_and_lead_triage",
+      "hits": 0,
+      "qualified_leads": 0,
+      "zero_hit_runs": 0
+    },
+    {
+      "query": "AI agent workflow automation small business CRM",
+      "target_source": "all",
+      "vertical_hint": "smb_healthcare_and_services",
+      "hits": 0,
+      "qualified_leads": 0,
+      "zero_hit_runs": 0
     }
   ],
   "winning_pitch_rules": [
@@ -250,5 +266,6 @@
       "distilled_at": "2026-11-25T22:27:00.000Z"
     }
   ],
-  "distilled_company_rules": []
+  "distilled_company_rules": [],
+  "_rawPresent": true
 }
