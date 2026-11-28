@@ -15,8 +15,8 @@
     331432
   ],
   "status": "HEALTHY",
-  "last_run_timestamp": "2026-11-28T10:19:01.405Z",
-  "heartbeat_unix": 1795861141405,
+  "last_run_timestamp": "2026-11-28T11:15:52.013Z",
+  "heartbeat_unix": 1795864552013,
   "cron_interval": "Every 30 minutes",
   "provider": "GitHub Actions Enterprise Cloud",
   "issues_scanned": 213,
@@ -29,36 +29,36 @@
       "query": "\"n8n\" OR \"Make\" automation agency partner",
       "hits": 3,
       "qualified_leads": 2,
-      "zero_hit_runs": 47,
-      "last_run_at": "2026-11-28T10:19:01.405Z"
+      "zero_hit_runs": 48,
+      "last_run_at": "2026-11-28T11:15:52.013Z"
     },
     "zapier OR make migration n8n": {
       "query": "zapier OR make migration n8n",
       "hits": 2,
       "qualified_leads": 1,
-      "zero_hit_runs": 53,
-      "last_run_at": "2026-11-28T10:19:01.405Z"
+      "zero_hit_runs": 54,
+      "last_run_at": "2026-11-28T11:15:52.013Z"
     },
     "n8n self-hosted queue mode webhook": {
       "query": "n8n self-hosted queue mode webhook",
       "hits": 3,
       "qualified_leads": 1,
-      "zero_hit_runs": 38,
-      "last_run_at": "2026-11-28T10:19:01.405Z"
+      "zero_hit_runs": 39,
+      "last_run_at": "2026-11-28T11:15:52.013Z"
     },
     "\"n8n\" error handling webhooks fail-safe": {
       "query": "\"n8n\" error handling webhooks fail-safe",
       "hits": 0,
       "qualified_leads": 0,
-      "zero_hit_runs": 1,
-      "last_run_at": "2026-11-28T10:19:01.405Z"
+      "zero_hit_runs": 2,
+      "last_run_at": "2026-11-28T11:15:52.013Z"
     },
     "AI agent workflow automation small business CRM": {
       "query": "AI agent workflow automation small business CRM",
       "hits": 0,
       "qualified_leads": 0,
-      "zero_hit_runs": 1,
-      "last_run_at": "2026-11-28T10:19:01.405Z"
+      "zero_hit_runs": 2,
+      "last_run_at": "2026-11-28T11:15:52.013Z"
     }
   },
   "last_ceo_brain_timestamp": "2026-11-28T09:42:43.723Z",
