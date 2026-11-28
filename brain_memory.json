@@ -1,6 +1,6 @@
 {
   "schema_version": "2.1.0",
-  "last_updated": "2026-11-28T10:05:00.000Z",
+  "last_updated": "2026-11-28T10:48:00.000Z",
   "agency": {
     "name": "MRomih Automations",
     "founder": "Mohamed Romih",
@@ -30,7 +30,7 @@
   ],
   "telegram_last_update_id": 177823494,
   "conversion_funnel": {
-    "proposals_sent": 2,
+    "proposals_sent": 3,
     "replies_received": 0,
     "calls_booked": 0,
     "deals_won": 0,
@@ -179,15 +179,18 @@
       "source_url": "https://community.n8n.io/t/hiring-ai-automation-engineer-n8n-ai-agents-for-small-business-client-projects-remote-20-55-hr/330154",
       "role": "AI Automation Engineer (n8n + AI agents for small-business ops)",
       "rate_range": "$20–$55/hr ($45/hr pitched)",
-      "status": "LINKEDIN_CONNECTION_SENT_PENDING",
+      "status": "PROPOSAL_SENT_N8N_DM_AND_LINKEDIN_PENDING",
       "target_profile": "https://www.linkedin.com/in/francois-hurstel-4b089021/",
       "invitation_sent_at": "2026-11-25T19:30:00Z",
-      "last_checked_at": "2026-11-28T10:01:00Z",
-      "follow_up_due_at": "2026-12-01T10:01:00Z",
+      "dm_url": "https://community.n8n.io/t/ai-automation-engineer-n8n-ai-agents-follow-up/331544",
+      "dm_sent_at": "2026-11-28T10:43:00Z",
+      "last_touched_at": "2026-11-28T10:43:00Z",
+      "last_checked_at": "2026-11-28T10:47:00Z",
+      "follow_up_due_at": "2026-12-01T10:43:00Z",
       "follow_up_staged": true,
       "follow_up_copy": "Hi Francois,\n\nThanks for connecting! Your focus on production n8n workflows and AI agents for small-business ops (scheduling, telephony, CRM, and accounting APIs) aligns directly with our core engineering stack.\n\nWe architect autonomous n8n pipelines with enterprise reliability patterns—including webhook verification, sub-workflow error routing, and live CRM synchronization. You can inspect an open-source example of our architecture here:\nhttps://github.com/MRomih-Automations/n8n-ai-lead-triage-kit\n\nOur live workflow case studies are available at:\nhttps://contra.com/mohamed_romih_jj5w3q2x\n\nRate & Availability:\n- Target Rate: $45/hr (within your $20–$55/hr budget)\n- Availability: 20–30 hrs/week; available for the weekly sync and ready to kick off with the small paid trial task immediately.\n\nGlad to hop on a quick 20-minute intro call this week—let me know what time works best.\n\nBest regards,\nMohamed Romih | MRomih Automations",
       "heat_score": 64,
-      "notes": "2026-11-28 check: LinkedIn invitation still Pending (not withdrawn). Checked n8n Community #330154 — open (no closed/hired note, replies locked), Francois1 profile hidden, zero external email/form, and mohamed_romih still TL0 (3d visited, 1 topic viewed, 1 post read, 3m read time) with no New Message button and 0 sent DMs. Pushed follow-up 72h to 2026-12-01."
+      "notes": "2026-11-28 update: LinkedIn invitation still Pending (not withdrawn). After unlocking Discourse TL1 on community.n8n.io, sent proof-bump DM #331544 (HTTP 200) to Francois1 with Contra 1080p demo + GitHub repo; verified in /messages/sent. Next follow-up due 2026-12-01."
     },
     {
       "id": "kkrova_airtable_gumroad_329131",
@@ -195,13 +198,16 @@
       "contact_person": "kkrova",
       "source": "n8n Community Jobs #329131",
       "source_url": "https://community.n8n.io/t/hiring-freelancer-for-airtable-workflow-remote/329131",
-      "application_method": "Airtable Form (https://airtable.com/appkK1MZ2cLhJYQlR/pagE4pCmCjCzloG9u/form)",
+      "application_method": "Airtable Form + n8n Community TL1 DM (#331545)",
       "role": "Freelancer for Airtable / Gumroad Workflow",
       "budget": "$1,000 ($650 fixed / $45/hr pitched)",
-      "status": "PROPOSAL_SUBMITTED_AIRTABLE_FORM",
+      "status": "PROPOSAL_SUBMITTED_AND_N8N_DM_SENT",
       "submitted_at": "2026-11-25T20:57:42Z",
-      "last_checked_at": "2026-11-28T10:01:00Z",
-      "follow_up_due_at": "2026-12-01T10:01:00Z",
+      "dm_url": "https://community.n8n.io/t/gumroad-to-airtable-integration-quick-follow-up/331545",
+      "dm_sent_at": "2026-11-28T10:46:00Z",
+      "last_touched_at": "2026-11-28T10:46:00Z",
+      "last_checked_at": "2026-11-28T10:47:00Z",
+      "follow_up_due_at": "2026-12-01T10:46:00Z",
       "follow_up_staged": true,
       "proposal_copy": "Hi kkrova,\n\nI’m Mohamed Romih, Founder and Principal Automation Architect at MRomih Automations. I read your post regarding your upcoming Gumroad store launch and your past frustrating experience with unreliable freelancers. Building bulletproof, production-grade syncs is our core specialty.\n\nTo ensure your data flows seamlessly without silent failures, we engineer resilient pipelines rather than basic triggers. For your project, we will implement:\n- Cryptographic Webhook Verification (HMAC SHA-256) so only authentic Gumroad events are processed\n- Idempotency & Duplicate Prevention using transaction IDs so records never double-write in Airtable\n- Enterprise Error-Handling Sub-Workflows with instant alerting and payload logging so zero sales slip through\n\nYou can inspect an open-source example of our n8n architecture here: https://github.com/MRomih-Automations/n8n-ai-lead-triage-kit and view our live workflow case studies on Contra: https://contra.com/mohamed_romih_jj5w3q2x.\n\nI am submitting my proposal directly through your Airtable form and am ready to build, test, and document this pipeline cleanly before your store launch.\n\nBest regards,\nMohamed Romih | MRomih Automations",
       "heat_score": 72,
@@ -209,7 +215,7 @@
         "https://community.make.com/t/airtable-automation-developer-needed/120066"
       ],
       "duplicate_check_note": "Confirmed exact duplicate cross-post on Make Community #120066 (@Alex_Gayton56, same Airtable form appkK1MZ2cLhJYQlR/pagE4pCmCjCzloG9u/form, 0 replies by author, still open); zero duplicate outreach sent (2026-11-27).",
-      "notes": "2026-11-28 check: n8n Community #329131 open (no filled/hired note, replies locked), kkrova profile hidden (no Message button), mohamed_romih TL0 (0 sent DMs, no New Message button), and no non-form contact channel exists (Airtable form & #120066 left untouched). Pushed next check to 2026-12-01."
+      "notes": "2026-11-28 update: After unlocking Discourse TL1 on community.n8n.io, sent proof-bump DM #331545 (HTTP 200) to kkrova after 75s anti-spam pause, citing Contra 1080p demo + profile; verified in /messages/sent. Airtable form & duplicate Make #120066 untouched. Next follow-up due 2026-12-01."
     },
     {
       "id": "karene_wpforms_capsule_120682",
